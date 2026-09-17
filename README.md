@@ -64,7 +64,7 @@ error: --host 0.0.0.0 is intentionally not supported yet for safety:
 
 ```bash
 # 1. 克隆
-git clone https://github.com/<YOUR-GH-USER>/dsh-public-deploy.git
+git clone https://github.com/Blockedxx/dsh-public-deploy.git
 cd dsh-public-deploy
 
 # 2. 装 dsh（注意 --allow-scripts，npm 11+ 默认拦截依赖安装脚本）
