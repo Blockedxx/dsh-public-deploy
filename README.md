@@ -186,12 +186,14 @@ dsh-public-deploy/
 │   ├── dsh-public-bridge.js   ★ 公网桥接核心
 │   ├── restart.sh             ★ 一键重启（自动加载 .env.public）
 │   ├── polish.sh              ★ 移动端插件开关/回滚
+│   ├── fix-github-dns.sh      修沙箱内 GitHub DNS 劫持
 │   └── legacy/                早期脚本（已弃用，历史参考）
 ├── plugins/
 │   ├── mobile-polish/         ★ 移动端排版优化（含 12 轮迭代踩坑记录）
 │   └── local-loopback-trust/  修「settings 在公网下不可用」
 ├── docs/
 │   ├── 部署说明.md            ★ 完整部署文档（含全部踩坑与证据）
+│   ├── 沙箱内连接GitHub.md     沙箱里 clone/push GitHub 失败的完整解法
 │   └── 安装说明.md            本地安装 dsh 的注意事项
 └── icons/                     open-in-app 图标补全资源
 ```
@@ -270,6 +272,32 @@ Host 改写导致 401、`/api` 403、边缘 CDN 缓存、路由同步延迟。
 - **`display: inline` 反而比 `inline-flex` 更差**：盒子塌陷后宽度撑满整行
 
 详见 [`plugins/mobile-polish/README.md`](plugins/mobile-polish/README.md)。
+</details>
+
+<details>
+<summary><b>9. 沙箱内 GitHub 连不上（DNS 被劫持）</b></summary>
+
+`github.com` / `api.github.com` / `raw.githubusercontent.com` 等**全部**被解析到
+`198.18.x.x`（RFC 2544 基准测试保留段，非真实地址）。
+向 5 个公共 DNS 直接查询 53 端口返回的也是同一个虚假 IP → **网络层透明劫持**，
+改 `resolv.conf` 无效，只能用 `/etc/hosts` 覆写。
+
+**最坑的一点**：此时 `gh auth status` 会报
+`The token in GH_TOKEN is invalid.` —— 但 **token 是好的**，
+是网络不可达被 `gh` 误报成了认证失败。别急着重发 token。
+
+```bash
+./scripts/fix-github-dns.sh          # 一键修复
+./scripts/fix-github-dns.sh check    # 检查状态
+```
+
+另外两个坑：
+- **`/etc/hosts` 重启后被还原**。官方给的持久化路径 `~/.user_hosts`
+  在本环境**静默失效**（沙箱默认 `awk` 是 mawk 1.3.4，解析合并用的
+  嵌套正则直接 panic `ERR_7`）→ 重启后需重新执行一次脚本
+- **push 时 TLS 被掐断** → 加 `-c http.version=HTTP/1.1`
+
+详见 [`docs/沙箱内连接GitHub.md`](docs/沙箱内连接GitHub.md)。
 </details>
 
 ---
