@@ -571,6 +571,23 @@ function restartDshWithNewHost() {
 }
 
 // 监听端口后先输出就绪日志（平台探测窗口约 5s），再等首个外部请求学习 Host
+server.on('error', (err) => {
+  if (err && err.code === 'EADDRINUSE') {
+    console.error(`\n❌ 端口 ${PORT} 已被占用，桥接进程无法启动。`);
+    console.error('   常见原因：上一次的桥接进程没有退出干净。');
+    console.error('   处理方式（二选一）：');
+    console.error(`     · 用仓库脚本重启：./scripts/restart.sh  （会先清理旧进程）`);
+    console.error(`     · 手动释放端口：  fuser -k ${PORT}/tcp`);
+    if (PORT === 8089) {
+      console.error('   注意：8089 是平台注入的 PORT，通常被沙箱内置 sync_server 占用，');
+      console.error('        请改用 DSH_PUBLIC_PORT 指定其他端口（默认 3000）。');
+    }
+    process.exit(1);
+  }
+  console.error(`❌ 桥接进程监听失败：${err && err.message ? err.message : err}`);
+  process.exit(1);
+});
+
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`serving http on 0.0.0.0:${PORT}`);
   console.log(`listening on port ${PORT}`);
