@@ -90,18 +90,28 @@ chmod +x scripts/*.sh
 
 ### 配置公网域名
 
-桥接进程通过 `DSH_PUBLIC_HOST` 环境变量识别你的公网域名。两种方式：
+桥接进程通过 `DSH_PUBLIC_HOST` 识别你的公网域名。**推荐写进配置文件**：
 
 ```bash
-# 方式 A：临时指定
-DSH_PUBLIC_HOST=abc123.app.workbuddy.host ./scripts/restart.sh
-
-# 方式 B：写进环境（推荐）
-echo 'export DSH_PUBLIC_HOST=abc123.app.workbuddy.host' >> ~/.bashrc
+cp .env.public.example .env.public
+# 编辑 .env.public，填入你的域名
+echo 'DSH_PUBLIC_HOST=abc123.app.workbuddy.host' > .env.public
 ```
 
-> 不知道自己的域名？桥接进程支持**运行时学习** —— 先不带该变量启动，
-> 然后用公网域名访问一次，它会自动从首个请求的 Host 头学到并落盘。
+之后 `restart.sh` / `polish.sh on|off|revert` 触发的**任何一次重启都会自动带上**该域名，
+不会退化成 `http://127.0.0.1:13080/?token=...` 这种本地链接。
+
+优先级（高 → 低）：
+
+| 来源 | 说明 |
+|---|---|
+| 已 `export` 的 `DSH_PUBLIC_HOST` | 临时覆盖用 |
+| `.env.public` | 持久化，**推荐** |
+| `.known-hosts.json` | 桥接进程运行时学习的兜底 |
+
+> 不知道自己的域名？**先不带该变量启动**，然后用公网域名访问一次，
+> 桥接进程会自动从首个请求的 Host 头学到并落盘（`learned gateway host: ...`）。
+> 下次重启就会自动读取。
 
 ---
 
@@ -171,9 +181,10 @@ echo 'export DSH_PUBLIC_HOST=abc123.app.workbuddy.host' >> ~/.bashrc
 ```
 dsh-public-deploy/
 ├── README.md                  ← 你正在看的
+├── .env.public.example        公网域名配置样例（复制为 .env.public）
 ├── scripts/
 │   ├── dsh-public-bridge.js   ★ 公网桥接核心
-│   ├── restart.sh             ★ 一键重启
+│   ├── restart.sh             ★ 一键重启（自动加载 .env.public）
 │   ├── polish.sh              ★ 移动端插件开关/回滚
 │   └── legacy/                早期脚本（已弃用，历史参考）
 ├── plugins/

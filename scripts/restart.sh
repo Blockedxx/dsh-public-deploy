@@ -4,13 +4,43 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BRIDGE="${SCRIPT_DIR}/dsh-public-bridge.js"
-PUBLIC_PORT=3000
-DSH_PORT=13080
+PUBLIC_PORT="${DSH_PUBLIC_PORT:-3000}"
+DSH_PORT="${DSH_INNER_PORT:-13080}"
 
 PROFILE="${DSH_PROFILE_DIR:-/root/.dsh/profiles/web}"
 PLUGIN_SRC="${SCRIPT_DIR}/../plugins/local-loopback-trust"
 PLUGIN_DST="$PROFILE/node_modules/dsh-local-loopback-trust"
+
+# ── 公网域名解析（三级优先级）────────────────────────────────────────────
+#   1. 已 export 的 DSH_PUBLIC_HOST（最高优先级）
+#   2. 仓库根目录的 .env.public（持久化，推荐）
+#   3. 桥接进程之前运行时学习并落盘的 .known-hosts.json（最后兜底）
+# 这样 `polish.sh on/off/revert` 触发的重启也能带上正确的公网域名，
+# 不会退化成 http://127.0.0.1:13080/?token=... 这种本地链接。
+ENV_FILE="${DSH_ENV_FILE:-${REPO_ROOT}/.env.public}"
+if [ -z "${DSH_PUBLIC_HOST:-}" ] && [ -f "$ENV_FILE" ]; then
+  # shellcheck disable=SC1090
+  set -a; . "$ENV_FILE"; set +a
+fi
+if [ -z "${DSH_PUBLIC_HOST:-}" ] && [ -f "${REPO_ROOT}/.known-hosts.json" ]; then
+  DSH_PUBLIC_HOST="$(node -e '
+    try {
+      const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+      const hosts = Array.isArray(d) ? d : (d.hosts || []);
+      const pick = hosts.find((h) => /app\.workbuddy\.host$/.test(h)) || hosts[0];
+      if (pick) process.stdout.write(String(pick));
+    } catch {}
+  ' "${REPO_ROOT}/.known-hosts.json" 2>/dev/null || true)"
+fi
+export DSH_PUBLIC_HOST="${DSH_PUBLIC_HOST:-}"
+if [ -n "$DSH_PUBLIC_HOST" ]; then
+  echo "==> 公网域名：$DSH_PUBLIC_HOST"
+else
+  echo "==> 公网域名：未设置（将退化为本地链接）"
+  echo "    设置方式：echo 'DSH_PUBLIC_HOST=你的域名' > ${ENV_FILE}"
+fi
 
 echo "==> 同步 local-loopback-trust 插件到 profile"
 if [ -d "$PLUGIN_SRC" ]; then
@@ -51,7 +81,7 @@ done
 sleep 2
 
 echo "==> 启动桥接进程"
-DSH_PUBLIC_PORT="$PUBLIC_PORT" DSH_INNER_PORT="$DSH_PORT" \
+DSH_PUBLIC_PORT="$PUBLIC_PORT" DSH_INNER_PORT="$DSH_PORT" DSH_PUBLIC_HOST="$DSH_PUBLIC_HOST" \
   setsid nohup node "$BRIDGE" >> /tmp/dsh-bridge.out 2>&1 < /dev/null &
 
 echo "==> 等待就绪（约 15 秒）"
