@@ -483,6 +483,24 @@ https://<你的域名>/?token=xxxxxxxxxxxx
 **把这个链接在浏览器里打开一次** —— 它会用 token 换取一个 30 天有效的 Cookie，
 之后直接访问域名即可，不用再带 token。
 
+> ### 📌 Cookie 是按域名签发的，两个域名互不相通
+>
+> 实测拿到的 Cookie 内容里写着当前域名：
+>
+> ```
+> set-cookie: dsh-auth-xxxx=...; Max-Age=2592000; HttpOnly; SameSite=Strict
+>             └─ payload: {"authority":"3000-9b99622e....e2b.bj7.sandbox.cloudstudio.club"}
+> ```
+>
+> 也就是说：**你在 `a62504992fd8ed07c.app.workbuddy.host` 登录过，
+> 不代表 `3000-xxx.e2b.xxx` 也登录了**——后者要再换一次 token。
+>
+> 作者一开始就被这个绊了一下：拿 A 域名的 Cookie 去打 B 域名，
+> 返回的是鉴权页（`mobile-polish` 出现 0 次），一度以为两条链路不等价。
+> **用各自域名的 Cookie 重测，两边都是 4 次注入，完全一致。**
+>
+> 好消息：**token 是同一个**，所以换个域名只是把同一个 `?token=` 链接再打开一次。
+
 ---
 
 ## 7. 第 5 步：验证
