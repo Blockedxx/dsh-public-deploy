@@ -18,6 +18,7 @@
   },
   "files": [
     "lib/index.mjs",
+    "lib/drawer-autoclose.mjs",
     "lib/mobile-polish.css",
     "cordis.patch.yml",
     "README.md"

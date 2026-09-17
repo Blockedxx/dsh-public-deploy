@@ -69,6 +69,7 @@
 12. [常见坑（12 个）](#12-常见坑)
 13. [回滚](#13-回滚)
 14. [附录：WorkBuddy 沙箱环境全景](#14-附录workbuddy-沙箱环境全景)
+15. [勘误记录](#15-勘误记录)
 
 ---
 
@@ -105,7 +106,11 @@ WorkBuddy 的沙箱（CloudStudio 底座）会**自动**为你提供公网映射
 > 所以**你要把服务跑在那个固定端口上** —— 本仓库默认用 **3000**。
 >
 > **而端口网关（②）恰好相反**：端口写进子域名里，`3000-` 和 `8081-` 各走各的。
-> 这也是为什么**本仓库推荐用 ②**：它在沙箱内就能自己算出来，不需要去任何地方"找"。
+> 它**不依赖任何发布动作**，沙箱内 `echo` 一下就有 —— 所以 **② 是本文的「默认可复现路径」**。
+>
+> **两者怎么选**：① 存在时优先用 ①（长期有效，容器重建后仍在）；
+> 若你的沙箱**从未执行过发布动作**（没有 `state.json`，多数新沙箱如此），就只能用 ②。
+> `whereami.sh` 已经按这个顺序推荐，不用自己判断。
 
 > ### 📌 两个域名的前缀，只有一个是你能自己算出来的
 >
@@ -119,8 +124,10 @@ WorkBuddy 的沙箱（CloudStudio 底座）会**自动**为你提供公网映射
 ### 关于端口，记住三条
 
 1. **必须监听 `0.0.0.0`**，不能只听 `127.0.0.1`（否则网关够不着）
-2. **不要用平台注入的 `PORT` 变量** —— 实测它可能是 `8089`，而该端口被沙箱内置的
-   `sync_server` 占用，绑定必然 `EADDRINUSE`。**自己写死 3000**
+2. **不要依赖平台注入的 `PORT` 变量** —— 部分沙箱会注入 `PORT=8089`，而该端口可能已被
+   内置的 `sync_server` 占用，绑定会 `EADDRINUSE`。**自己写死 3000**
+   > 注：并非所有沙箱都会注入 `PORT`。实测有的环境该变量为空、`8089` 也空闲，
+   > 因此「必然冲突」的说法不准确。桥接进程一律忽略 `process.env.PORT`，两种环境都不会踩到。
 3. **端口号要和域名里的端口号一致** —— 用端口网关域名时，`3000-xxx.e2b.xxx`
    里的 `3000` 就是你服务监听的端口；用主入口域名时，则必须是它固定映射的那个端口
 
@@ -142,7 +149,7 @@ WorkBuddy 的沙箱（CloudStudio 底座）会**自动**为你提供公网映射
 |---|---|---|
 | Node.js | **≥ 22.19.0，强烈建议 v24.20.0** | 见下方警告 |
 | npm | 11+ | 注意 `--allow-scripts` 问题 |
-| OS | Linux（作者环境 Ubuntu 22.04） | |
+| OS | Linux（实测 Ubuntu 24.04.3 LTS） | 早期版本误写为 22.04，实测与 `docs/部署说明.md` 一致 |
 
 > ### ⚠️ Node 版本是硬门槛，必须先处理
 >
@@ -165,12 +172,15 @@ WorkBuddy 的沙箱（CloudStudio 底座）会**自动**为你提供公网映射
 > curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
 > export NVM_DIR="$HOME/.nvm" && . "$NVM_DIR/nvm.sh"
 >
-> # 装 v24
-> nvm install 24
-> nvm use 24
-> nvm alias default 24
-> node -v   # 应为 v24.x.x
+> # 装 v24（建议锁 24.20.0，与本文实测一致；区域镜像不通时加下一行的镜像变量）
+> # export NVM_NODEJS_ORG_MIRROR=https://mirrors.tencent.com/nodejs-release/
+> nvm install 24.20.0
+> nvm use 24.20.0
+> nvm alias default 24.20.0
+> node -v   # 应为 v24.20.0
 > ```
+>
+> ⚠️ **换 Node 版本后必须重新全局安装 dsh** —— 否则 `dsh` 仍指向旧 Node 的 bin 目录。
 >
 > 本仓库的桥接脚本会**自动探测**可用的 Node（优先 v22.19+/v23+），
 > 但 `dsh` 本身还是需要你装好并让 PATH 指向正确的版本。
@@ -183,10 +193,16 @@ WorkBuddy 的沙箱（CloudStudio 底座）会**自动**为你提供公网映射
 # 确认 Node 版本
 node -v   # 必须 >= v22.19，建议 v24.x
 
+# 官方源不通就先切镜像（沙箱出网策略因区域而异）
+# npm config set registry https://registry.npmmirror.com
+
 # 安装（注意 --allow-scripts，这不是可选项）
 npm i -g @deepseek-ai/dsh \
   --allow-scripts=@deepseek-ai/dsh-subprocess-local,koffi,node-pty,@google/genai,protobufjs
 ```
+
+> 装完立刻验证 —— **不要跳过**。如果 `dsh --version` 没有任何输出且退出码为 0，
+> 就是上面那个「静默失效」，说明 PATH 里的 Node 还是旧版。
 
 **为什么必须加 `--allow-scripts`**：
 
@@ -226,6 +242,12 @@ chmod +x scripts/*.sh
 ./scripts/polish.sh on      # 启用排版优化
 ./scripts/polish.sh status  # 查看状态
 ```
+
+> 💡 **建议顺序微调**：`polish.sh on` 结尾会触发一次重启。
+> 如果此时还没写 `.env.public`，它输出的访问链接会退化成 `http://127.0.0.1:13080/?token=...`
+> （本地链接，手机打不开）。
+> 想一次到位，就**先跑第 5 步的 `./scripts/whereami.sh --write`，再回来执行 `polish.sh on`**；
+> 已经跑过也没关系，第 6 步再 `./scripts/restart.sh` 一次就会带上域名。
 
 看到这样的输出就对了：
 
@@ -284,10 +306,24 @@ cd dsh-public-deploy
 
 下面解释这两个域名分别是怎么来的，以及**为什么你之前找不到**。
 
-| | 方法 | 怎么拿 | 推荐度 |
-|---|---|---|---|
-| **3.1** | 主入口域名 `<appName>.app.workbuddy.host` | 读 `/root/.workbuddy-sandbox-publish/state.json` | ⭐⭐⭐⭐ 正式用 |
-| **3.2** | 端口网关域名 `<端口>-${X_IDE_SPACE_KEY}.e2b.${X_IDE_SPACE_REGION}.sandbox.cloudstudio.club` | **环境变量一条 `echo`** | ⭐⭐⭐⭐⭐ 调试/兜底 |
+| | 方法 | 怎么拿 | 前提 | 推荐度 |
+|---|---|---|---|---|
+| **3.2** | 端口网关域名 `<端口>-${X_IDE_SPACE_KEY}.e2b.${X_IDE_SPACE_REGION}.sandbox.cloudstudio.club` | **环境变量一条 `echo`** | **无，随时可用** | ⭐⭐⭐⭐⭐ **默认路径** |
+| **3.1** | 主入口域名 `<appName>.app.workbuddy.host` | 读 `/root/.workbuddy-sandbox-publish/state.json` | 沙箱**已执行过发布动作** | ⭐⭐⭐ 有则用之 |
+
+> ### ⚠️ 先看这条：3.1 在多数新沙箱里根本不存在
+>
+> `/root/.workbuddy-sandbox-publish/state.json` **只在沙箱执行过「发布」动作后才会生成**。
+> 实测（未发布过的沙箱）：
+>
+> ```
+> ⚠ 未找到发布状态文件：/root/.workbuddy-sandbox-publish/state.json
+>     （说明本沙箱还没执行过「发布」动作，主入口域名不存在）
+> ```
+>
+> 此时 **3.1 整个分支走不通，只能用 3.2**。
+> 所以：**先跑 `./scripts/whereami.sh`，它探测完会直接告诉你哪个能用、并推荐一个。**
+> 只在它列出了 ① 时才考虑 3.1。
 
 ---
 
@@ -465,11 +501,16 @@ cd dsh-public-deploy
 ==> 停止现有服务
 ==> 启动桥接进程
 ==> 等待就绪（约 15 秒）
-    本地 3000 已响应：HTTP 200
+    本地 3000 已响应：HTTP 502
 ==> 验证 __DSH_TRANSPORT__ 注入是否生效
     ✅ 已注入 globalThis.__DSH_TRANSPORT__（Settings 在公网域名下可用）
 ==> 完成。访问地址见 /workspace/dsh-公网访问地址.txt
 ```
+
+> **关于上面那个 `HTTP 502`（早期版本写的是 200，实际值不固定）**：
+> `restart.sh` 的就绪判定是「端口返回了非 `000` 的响应就放行」，而那一刻 dsh 子进程
+> 通常还没起来，桥接会先回 502。**看到 502 不代表失败**，真正的验收在下一步。
+> 只有打印 `❌ 未检测到注入！` 才需要排查。
 
 访问地址会写到 `/workspace/dsh-公网访问地址.txt`：
 
@@ -561,10 +602,17 @@ curl -s -b /tmp/ck.txt "https://<你的域名>/" | grep -o '__DSH_TRANSPORT__"\]
 # 彻底回滚
 ./scripts/polish.sh revert
 
-# 停止服务
-pkill -f dsh-public-bridge.js
-pkill -f "dsh web"
+# 停止服务（按端口定位 PID —— 见下方警告）
+for port in 3000 13080; do
+  ss -lntp | grep ":${port} " | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u | xargs -r kill
+done
 ```
+
+> ### ⚠️ 不要用 `pkill -f dsh` / `pkill -f "dsh web"`
+>
+> 你敲的这条命令**自身**的命令行里就包含 `dsh` 字样，`pkill -f` 会连当前 shell 一起匹配、
+> **把自己杀掉**（早期版本这里给的就是 `pkill -f`，实测踩过）。
+> 一律用上面的**端口定位 PID** 写法，或者直接 `pkill -f scripts/dsh-public-bridge.js`（该模式不会命中当前 shell）。
 
 **重启后域名会变吗？** 不会。但 **token 每次重启都会重新生成**，
 所以要重新看 `/workspace/dsh-公网访问地址.txt`。
@@ -659,7 +707,7 @@ dsh-public-deploy/
 ├── README.md                  ← 你正在看的：部署操作手册
 ├── .env.public.example        公网域名配置样例（复制为 .env.public）
 ├── scripts/
-│   ├── dsh-public-bridge.js   ★ 公网桥接核心
+│   ├── scripts/dsh-public-bridge.js   ★ 公网桥接核心
 │   ├── whereami.sh            ★ 找出你的公网域名（并探测连通性）
 │   ├── restart.sh             ★ 一键重启（自动加载 .env.public）
 │   ├── polish.sh              ★ 移动端插件开关/回滚
@@ -710,12 +758,19 @@ npm i -g @deepseek-ai/dsh --allow-scripts=@deepseek-ai/dsh-subprocess-local,koff
 </details>
 
 <details>
-<summary><b>4. 平台注入的 PORT 已被占用</b></summary>
+<summary><b>4. 别用平台注入的 PORT（部分沙箱会与 sync_server 抢端口）</b></summary>
 
-平台会注入 `PORT`（实测为 `8089`），但该端口已被沙箱内置的 `sync_server` 占用，
-绑定必然 `EADDRINUSE`。
+早期版本写的是「平台**必然**注入 `PORT=8089` 且**必然**被 `sync_server` 占用」，
+这条是**单次观测被当成了普遍事实**，实测并不成立：
 
-→ 桥接进程**忽略** `process.env.PORT`，固定用 **3000**。
+| 环境 | `PORT` | `8089` |
+|---|---|---|
+| 作者当时 | `8089` | 被 `sync_server` 占用 |
+| 复现环境（本次） | **未注入** | **无监听** |
+
+正确的表述是：**`PORT` 可能不存在、也可能指向一个已被占用的端口，两种情况都要能活。**
+
+→ 桥接进程**忽略** `process.env.PORT`，固定用 **3000**，因此两种环境都不会踩到。
 </details>
 
 <details>
@@ -813,7 +868,7 @@ Host 改写导致 401、`/api` 403、边缘 CDN 缓存、路由同步延迟。
 停止服务：
 
 ```bash
-pkill -f dsh-public-bridge.js
+pkill -f scripts/dsh-public-bridge.js
 pkill -f "dsh web"
 ```
 
@@ -907,11 +962,18 @@ POST http://codebuddy.auth-proxy.local/v2/agentos/artifact-releases
 | `github.com`（修复后） | 200 ✅ | hosts 覆写后正常 |
 | `www.baidu.com` | 200 ✅ | 正常 |
 | `mirrors.tencent.com` | 200 ✅ | 正常 |
-| `registry.npmjs.org` | 000 ❌ | 不通 |
+| `registry.npmjs.org` | 200 ✅ / 000 ❌ **视环境而定** | 早期版本记为「不通」，本次复现实测 **200 通**并直连装完 520 个包 |
+| `registry.npmmirror.com` | 200 ✅ | 兜底镜像，实测可用 |
 | `pypi.org` | 000 ❌ | 不通 |
 | `codingcorp.cloudstudio.net` | 404 / 302 ⚠️ | DNS 通，无公开接口 |
 
-> 沙箱出网**不是全通**，装依赖优先用国内镜像。
+> 沙箱出网**不是全通**，且**不同区域/实例的出网策略不一样**。
+> 装依赖时先试官方源，不通再切国内镜像：
+>
+> ```bash
+> npm config get registry                                  # 看当前源
+> npm config set registry https://registry.npmmirror.com    # 不通就切镜像
+> ```
 
 
 ### 资源
@@ -938,6 +1000,25 @@ POST http://codebuddy.auth-proxy.local/v2/agentos/artifact-releases
 - `/etc/hosts` 顺序：`files dns`（files 优先，所以 hosts 覆写有效）
 - 内置代理：`SPACE_PROXY_ENDPOINT`、`X_IDE_AUTH_PROXY`
 - **GitHub 全域名段被劫持到 `198.18.x.x`**（见坑 10）
+
+---
+
+## 15. 勘误记录
+
+2026-09-18 在全新沙箱里按本教程从零复现了一遍，修正了以下说法。
+（复现环境：Ubuntu 24.04.3 LTS，区域 `sg2`，dsh `0.1.5-rc.2`，dsh-mobile `0.4.2`）
+
+| # | 原说法 | 更正后 |
+|---|---|---|
+| 1 | OS 是 Ubuntu 22.04 | **Ubuntu 24.04.3 LTS**（与 `docs/部署说明.md` 一致） |
+| 2 | 平台**必然**注入 `PORT=8089` 且**必然**被 `sync_server` 占用 | 因环境而异：复现环境 `PORT` 未注入、`8089` 空闲。桥接忽略 `PORT` 即可规避 |
+| 3 | `registry.npmjs.org` → `000 不通` | 复现环境 **200 通**，直连装完 520 包；不通时才切镜像 |
+| 4 | `restart.sh` 就绪后输出 `HTTP 200` | 实际常为 **502**（dsh 子进程还没起来），非 `000` 即放行，不代表失败 |
+| 5 | 停止服务用 `pkill -f "dsh web"` | **会误杀自身 shell**；改用端口定位 PID，或 `pkill -f scripts/dsh-public-bridge.js` |
+| 6 | 推荐域名顺序：① 主入口「正式用」 | ① 依赖**已执行过发布动作**才有；未发布过的沙箱（多数新沙箱）**只能用 ②** |
+| 7 | `docs/安装说明.md` 把 `dsh web --host 0.0.0.0` 列为常用命令 | 该参数被官方**刻意拒绝**（会暴露 RCE），已删除并加说明 |
+| 8 | `docs/部署说明.md` 路径 `/workspace/dsh-公网部署/` + 根目录脚本 | 现为 `/workspace/dsh-public-deploy/` + `scripts/` + `plugins/` |
+| 9 | `plugins/mobile-polish` 的 `files` 只列 2 个 lib 文件 | `lib/drawer-autoclose.mjs` 被 `index.mjs` import 却漏列，已补（否则 `npm pack` 分发会缺文件 → dsh 启动崩溃） |
 
 ---
 

@@ -82,7 +82,7 @@ document.body.getPropertyValue('--dsh-content-font-size')             // → "14
 ## 2. 安装
 
 ```bash
-cd /workspace/dsh-公网部署
+cd /workspace/dsh-public-deploy
 ./polish.sh on
 ```
 
@@ -101,7 +101,7 @@ cd /workspace/dsh-公网部署
 **这是本插件最重要的特性 —— 任何一步出错都能一键还原。**
 
 ```bash
-cd /workspace/dsh-公网部署
+cd /workspace/dsh-public-deploy
 
 ./polish.sh off      # 暂时关闭（保留文件，改 cordis.patch.yml 的 enabled: false）
 ./polish.sh on       # 重新启用
@@ -116,7 +116,7 @@ cd /workspace/dsh-公网部署
 |---|---|---|
 | 1. 开关级 | 只改 `enabled: false`，文件全保留 | `./polish.sh off` |
 | 2. 配置级 | 从 `package.json.polish-backup-*` 恢复 | `./polish.sh revert` |
-| 3. 工作区级 | 插件源码独立在 `plugin-dsh-mobile-polish/`，删了 profile 里的副本也不丢 | 手工 `cp` |
+| 3. 工作区级 | 插件源码独立在 `plugins/mobile-polish/`，删了 profile 里的副本也不丢 | 手工 `cp` |
 
 `revert` 的实现优先级：**先找最近一次的 `package.json.polish-backup-*` 备份恢复**；若一个备份都没有（理论上不该发生），才退化为"安全摘除"模式（只删 `bundles`/`dependencies` 里的两项，不动其它内容）。
 
@@ -1296,7 +1296,7 @@ window.__dshmPolishDrawerPatched;   // → true
 命令行整体自检：
 
 ```bash
-cd /workspace/dsh-公网部署 && ./polish.sh status
+cd /workspace/dsh-public-deploy && ./scripts/polish.sh status
 ```
 
 ---
@@ -1304,7 +1304,7 @@ cd /workspace/dsh-公网部署 && ./polish.sh status
 ## 9. 卸载
 
 ```bash
-cd /workspace/dsh-公网部署 && ./polish.sh revert
+cd /workspace/dsh-public-deploy && ./scripts/polish.sh revert
 ```
 
-插件源码目录 `plugin-dsh-mobile-polish/` 不会被删除，需要彻底清理时手动 `rm -rf`。
+插件源码目录 `plugins/mobile-polish/` 不会被删除，需要彻底清理时手动 `rm -rf`。
