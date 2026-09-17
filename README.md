@@ -506,6 +506,7 @@ dsh-public-deploy/
 ├── docs/
 │   ├── 部署说明.md            ★ 完整部署文档（含全部踩坑与证据）
 │   ├── 沙箱内连接GitHub.md     沙箱里 clone/push GitHub 失败的完整解法
+│   ├── GitHub连接快速参考.md   30 秒修复指南（速查用）
 │   └── 安装说明.md            本地安装 dsh 的注意事项
 └── icons/                     open-in-app 图标补全资源
 ```
