@@ -1,83 +1,288 @@
-# DeepSeek Harness 公网部署 + 移动端优化
+# 在 WorkBuddy 沙箱里部署 DeepSeek Harness（公网 HTTPS 可访问）
 
-在**云沙箱**里把 [DeepSeek Harness](https://www.npmjs.com/package/@deepseek-ai/dsh)（`dsh`）
-跑成**公网 HTTPS 可访问**，并附带一套**可回滚的移动端排版优化插件**。
+把 [DeepSeek Harness](https://www.npmjs.com/package/@deepseek-ai/dsh)（`dsh`）
+从零装好，跑成**手机能直接打开的 HTTPS 服务**，并附带一套**可回滚的移动端排版优化**。
 
-照着做，30 分钟内你能得到一个和作者环境一致的、能在手机上顺滑使用的 dsh。
+跟着做，约 30 分钟，你会得到一个和作者环境完全一致的 dsh。
 
 ```
-公网 HTTPS  ──►  云平台 TLS  ──►  网关  ──►  桥接进程:3000  ──►  dsh:13080 (仅 127.0.0.1)
-                                              ↑
-                                   本仓库提供（dsh 官方拒绝绑 0.0.0.0）
+手机 / 电脑
+    │  HTTPS
+    ▼
+┌──────────────────────────────────────────────┐
+│  WorkBuddy 平台（TLS 终止 + 网关，无需自建）  │
+│  ① <你的ID>.app.workbuddy.host   ← 主入口     │
+│  ② <PORT>-<SPACE_KEY>.e2b...     ← 按端口映射 │
+└──────────────────┬───────────────────────────┘
+                   │ 反代到沙箱内某个端口
+                   ▼
+        ┌────────────────────────┐
+        │  桥接进程  0.0.0.0:3000 │  ← 本仓库提供
+        └───────────┬────────────┘
+                    │ 127.0.0.1:13080
+                    ▼
+        ┌────────────────────────┐
+        │  dsh web（官方拒绝绑     │
+        │  0.0.0.0，只能本地监听） │
+        └────────────────────────┘
 ```
 
 ---
 
 ## 目录
 
-- [这个仓库解决什么问题](#这个仓库解决什么问题)
-- [快速开始](#快速开始)
-- [为什么需要「桥接」](#为什么需要桥接)
-- [移动端优化插件](#移动端优化插件)
-- [仓库结构](#仓库结构)
-- [常见坑](#常见坑)
-- [回滚](#回滚)
-- [致谢与许可](#致谢与许可)
+1. [先搞清楚：WorkBuddy 给了你什么](#1-先搞清楚workbuddy-给了你什么)
+2. [环境要求](#2-环境要求)
+3. [第 1 步：装 dsh](#3-第-1-步装-dsh)
+4. [第 2 步：装移动端插件](#4-第-2-步装移动端插件)
+5. [第 3 步：拿到你的公网域名](#5-第-3-步拿到你的公网域名)
+6. [第 4 步：启动服务](#6-第-4-步启动服务)
+7. [第 5 步：验证](#7-第-5-步验证)
+8. [日常使用](#8-日常使用)
+9. [为什么必须要有「桥接层」](#9-为什么必须要有桥接层)
+10. [移动端排版优化](#10-移动端排版优化)
+11. [仓库结构](#11-仓库结构)
+12. [常见坑（12 个）](#12-常见坑)
+13. [回滚](#13-回滚)
+14. [附录：WorkBuddy 沙箱环境全景](#14-附录workbuddy-沙箱环境全景)
 
 ---
 
-## 这个仓库解决什么问题
+## 1. 先搞清楚：WorkBuddy 给了你什么
 
-`dsh` 是个能执行任意 shell 命令的 AI 编码代理。它的 Web UI 出于安全考虑
-**主动拒绝绑定 `0.0.0.0`**，只肯监听 `127.0.0.1`：
+这一步很重要，**不理解这层，后面的域名问题会卡死你**。
 
-```bash
-$ dsh web --host 0.0.0.0
-error: --host 0.0.0.0 is intentionally not supported yet for safety:
-       it would expose remote code execution to the network; use 127.0.0.1 instead
+WorkBuddy 的沙箱（CloudStudio 底座）会**自动**为你提供公网映射，你不需要：
+
+- ❌ 自建 nginx
+- ❌ 配反向代理
+- ❌ 申请 SSL 证书
+
+平台在腾讯云 CLB 层做 TLS 终止，再由沙箱内置的 `sandbox-proxy` 反代到你的端口。
+
+### 你会拿到两个域名，它们是两套独立机制
+
+| | 域名形态 | 怎么来 | 映射规则 | 生命周期 |
+|---|---|---|---|---|
+| **① 主入口** | `<ID>.app.workbuddy.host` | 平台给你分配的 | 固定指向**一个**端口 | 长期 |
+| **② 端口网关** | `<PORT>-<SPACE_KEY>.e2b.<REGION>.sandbox.cloudstudio.club` | 由环境变量拼出 | **任意端口各自独立映射** | 跟沙箱会话 |
+
+**实测证据**（作者环境）：
+
+```
+① https://a62504992fd8ed07c.app.workbuddy.host/          -> 401 ✅
+② https://3000-<SPACE_KEY>.e2b.bj7.sandbox.cloudstudio.club/ -> 401 ✅
+   https://3001-<SPACE_KEY>.e2b.bj7.sandbox.cloudstudio.club/ -> 500（该端口无服务）
+   https://8081-<SPACE_KEY>.e2b.bj7.sandbox.cloudstudio.club/ -> 返回 8081 上服务的内容
 ```
 
-这很对，但也意味着**你没法直接从手机访问它**。
+> **关键结论**：`app.workbuddy.host` **不跟随端口变化**，它固定映射到一个端口。
+> 实测：另起一个 8081 服务后，`app.workbuddy.host` 仍返回 3000 端口上的 dsh。
+> 所以**你要把服务跑在那个固定端口上** —— 本仓库默认用 **3000**。
+>
+> 作者实测 `a62504992fd8ed07c` 与 `X_IDE_SPACE_KEY` 的值**不一致**，
+> 说明主入口前缀是平台侧的独立标识，**不要试图自己拼**，直接去控制台拿。
 
-本仓库做的事，就是在不破坏这个安全约束的前提下（dsh 仍然只听 `127.0.0.1`），
-用一个桥接进程把它的流量接到沙箱的公网映射上，并顺手解决了
-**鉴权、Host 校验、settings 不可用**等一系列踩坑。
+### 关于端口，记住三条
+
+1. **必须监听 `0.0.0.0`**，不能只听 `127.0.0.1`（否则网关够不着）
+2. **不要用平台注入的 `PORT` 变量** —— 实测它可能是 `8089`，而该端口被沙箱内置的
+   `sync_server` 占用，绑定必然 `EADDRINUSE`。**自己写死 3000**
+3. 端口号要和你在控制台/网关用的保持一致
 
 ---
 
-## 快速开始
+## 2. 环境要求
 
-### 前置条件
+### 硬件（沙箱默认给的）
 
-| 项 | 要求 |
-|---|---|
-| 运行环境 | 云沙箱 / 容器（有公网映射能力） |
-| Node.js | **≥ 22.19.0，建议 v24.20.0** |
-| 平台注入的环境变量 | `X_IDE_SPACE_KEY`、`X_IDE_SPACE_REGION`（沙箱一般自动提供） |
-| 公网域名 | 形如 `<YOUR-SANDBOX-ID>.app.workbuddy.host` |
+| 项 | 作者实测值 | 说明 |
+|---|---|---|
+| CPU | `X_IDE_CPU_LIMIT=4` | 4 核 |
+| 内存 | `X_IDE_MEMORY_LIMIT=8G` | **8G**，不是 32G。dsh 峰值约 500MB~1GB，够用 |
+| 磁盘 | `X_IDE_DISK_QUOTA=50G` | |
 
-> ⚠️ **Node 版本是硬门槛**：`dsh` 内部用了 `import.meta.main`，
-> 而该 API 在 **v22.13.x 下返回 `undefined`**，会导致 dsh CLI **静默失效**
-> （不报错、不输出，看起来像卡死）。必须 v22.19.0+ 或 v24 系列。
+### 软件
 
-### 三步走
+| 项 | 要求 | 说明 |
+|---|---|---|
+| Node.js | **≥ 22.19.0，强烈建议 v24.20.0** | 见下方警告 |
+| npm | 11+ | 注意 `--allow-scripts` 问题 |
+| OS | Linux（作者环境 Ubuntu 22.04） | |
+
+> ### ⚠️ Node 版本是硬门槛，必须先处理
+>
+> `dsh` 内部用了 `import.meta.main` 这个较新的 API：
+>
+> | Node 版本 | `import.meta.main` | 结果 |
+> |---|---|---|
+> | v22.13.1 | `undefined` | ❌ dsh CLI **静默失效** |
+> | v24.20.0 | `true` | ✅ 正常 |
+>
+> **「静默失效」的意思是：不报错、不输出、不退出，看起来像卡死。**
+> 你会以为是别的问题，排查很久。
+>
+> 沙箱自带的 Node 常常就是 v22.13.x，所以**先升级**：
+>
+> ```bash
+> node -v   # 如果是 v22.13.x，继续往下
+>
+> # 装 nvm（如果还没有）
+> curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+> export NVM_DIR="$HOME/.nvm" && . "$NVM_DIR/nvm.sh"
+>
+> # 装 v24
+> nvm install 24
+> nvm use 24
+> nvm alias default 24
+> node -v   # 应为 v24.x.x
+> ```
+>
+> 本仓库的桥接脚本会**自动探测**可用的 Node（优先 v22.19+/v23+），
+> 但 `dsh` 本身还是需要你装好并让 PATH 指向正确的版本。
+
+---
+
+## 3. 第 1 步：装 dsh
 
 ```bash
-# 1. 克隆
+# 确认 Node 版本
+node -v   # 必须 >= v22.19，建议 v24.x
+
+# 安装（注意 --allow-scripts，这不是可选项）
+npm i -g @deepseek-ai/dsh \
+  --allow-scripts=@deepseek-ai/dsh-subprocess-local,koffi,node-pty,@google/genai,protobufjs
+```
+
+**为什么必须加 `--allow-scripts`**：
+
+npm 11+ 默认**拦截**依赖的安装脚本（安全策略）。而 dsh 的原生依赖
+（`koffi`、`node-pty` 等）需要编译脚本才能装好。不加这个参数，装完会缺少原生模块。
+
+验证装好了：
+
+```bash
+dsh --version
+```
+
+---
+
+## 4. 第 2 步：装移动端插件
+
+> 这步可选，但**强烈建议做** —— 官方前端没有任何移动端适配，
+> 不装的话手机上看着会很难受。
+
+```bash
+# 先装官方社区插件（提供移动端布局骨架）
+# 注意：dsh plugin 必须带 --profile，它内部把参数转发给 pnpm
+dsh plugin --profile web add dsh-mobile
+
+# 确认装上了
+dsh plugin --profile web list
+# 应输出：dsh-mobile 0.4.x
+```
+
+然后克隆本仓库，用自带的脚本装上排版优化插件：
+
+```bash
 git clone https://github.com/Blockedxx/dsh-public-deploy.git
 cd dsh-public-deploy
-
-# 2. 装 dsh（注意 --allow-scripts，npm 11+ 默认拦截依赖安装脚本）
-npm i -g @deepseek-ai/dsh --allow-scripts=@deepseek-ai/dsh-subprocess-local,koffi,node-pty,@google/genai,protobufjs
-
-# 3. 起服务（首次运行会引导你填公网域名）
 chmod +x scripts/*.sh
+
+./scripts/polish.sh on      # 启用排版优化
+./scripts/polish.sh status  # 查看状态
+```
+
+看到这样的输出就对了：
+
+```
+── dsh-mobile-polish 状态 ──────────────────────
+  插件目录   : 已部署
+  开关       : true
+  断点       : 720px
+  bundle注册 : 是
+────────────────────────────────────────────────
+```
+
+详见 [第 10 节](#10-移动端排版优化)。
+
+---
+
+## 5. 第 3 步：拿到你的公网域名
+
+**这一步最容易卡住，看清楚。**
+
+### 3.1 主入口域名（推荐用这个）
+
+去 **WorkBuddy 控制台**找你的应用访问域名，形如：
+
+```
+https://<你的ID>.app.workbuddy.host
+```
+
+> `a62504992fd8ed07c` 这个前缀**不要自己拼**。它和 `X_IDE_SPACE_KEY`
+> 是两个不同的标识（作者实测确认），自己拼一定拼错。
+
+拿到后写进配置文件：
+
+```bash
+cd dsh-public-deploy
+cp .env.public.example .env.public
+
+# 把你的域名填进去（不要带 https:// 和末尾斜杠）
+echo 'DSH_PUBLIC_HOST=你的ID.app.workbuddy.host' > .env.public
+```
+
+### 3.2 或者：用端口网关域名
+
+如果你想自己拼，用这个规则（**任意端口都自动映射**）：
+
+```bash
+# 从环境变量读
+echo "https://3000-${X_IDE_SPACE_KEY}.e2b.${X_IDE_SPACE_REGION}.sandbox.cloudstudio.club/"
+```
+
+作者环境实测值：
+
+```
+X_IDE_SPACE_KEY    = 9b99622e67154aa9b8593c570ed9ab43
+X_IDE_SPACE_REGION = bj7
+→ https://3000-9b99622e67154aa9b8593c570ed9ab43.e2b.bj7.sandbox.cloudstudio.club/
+```
+
+**两种域名都能用**，选一个即可。区别是：
+
+- 主入口更短、更稳定 → **推荐**
+- 端口网关不依赖你在控制台的配置，适合临时调试
+
+### 3.3 实在不知道域名？
+
+桥接进程支持**运行时学习**：先不设 `DSH_PUBLIC_HOST` 启动，
+然后用任意域名访问一次，它会从请求头里学到并落盘：
+
+```
+learned gateway host: 3000-9b99622e...e2b.bj7.sandbox.cloudstudio.club
+```
+
+下次重启会自动读取。
+
+---
+
+## 6. 第 4 步：启动服务
+
+```bash
+cd dsh-public-deploy
 ./scripts/restart.sh
 ```
 
-启动成功后会输出：
+预期输出：
 
 ```
+==> 公网域名：a62504992fd8ed07c.app.workbuddy.host
+==> 同步 local-loopback-trust 插件到 profile
+    已同步到 /root/.dsh/profiles/web/node_modules/dsh-local-loopback-trust
+    profile bundles: @deepseek-ai/dsh-base, @deepseek-ai/dsh-web-app, dsh-mobile, ...
+==> 停止现有服务
 ==> 启动桥接进程
 ==> 等待就绪（约 15 秒）
     本地 3000 已响应：HTTP 200
@@ -86,67 +291,135 @@ chmod +x scripts/*.sh
 ==> 完成。访问地址见 /workspace/dsh-公网访问地址.txt
 ```
 
-访问输出的 URL（第一次打开用于换取 Cookie），即可在手机/电脑上使用。
+访问地址会写到 `/workspace/dsh-公网访问地址.txt`：
 
-### 配置公网域名
+```
+DeepSeek Harness —— 访问地址
 
-桥接进程通过 `DSH_PUBLIC_HOST` 识别你的公网域名。**推荐写进配置文件**：
-
-```bash
-cp .env.public.example .env.public
-# 编辑 .env.public，填入你的域名
-echo 'DSH_PUBLIC_HOST=abc123.app.workbuddy.host' > .env.public
+访问链接（首次打开用于换取会话 Cookie）：
+https://<你的域名>/?token=xxxxxxxxxxxx
 ```
 
-之后 `restart.sh` / `polish.sh on|off|revert` 触发的**任何一次重启都会自动带上**该域名，
-不会退化成 `http://127.0.0.1:13080/?token=...` 这种本地链接。
-
-优先级（高 → 低）：
-
-| 来源 | 说明 |
-|---|---|
-| 已 `export` 的 `DSH_PUBLIC_HOST` | 临时覆盖用 |
-| `.env.public` | 持久化，**推荐** |
-| `.known-hosts.json` | 桥接进程运行时学习的兜底 |
-
-> 不知道自己的域名？**先不带该变量启动**，然后用公网域名访问一次，
-> 桥接进程会自动从首个请求的 Host 头学到并落盘（`learned gateway host: ...`）。
-> 下次重启就会自动读取。
+**把这个链接在浏览器里打开一次** —— 它会用 token 换取一个 30 天有效的 Cookie，
+之后直接访问域名即可，不用再带 token。
 
 ---
 
-## 为什么需要「桥接」
+## 7. 第 5 步：验证
 
-下面是踩完全部坑之后收敛出的架构。每一层都对应一个真实问题：
+按顺序跑，全绿就算成功：
+
+```bash
+# 1. 本地桥接是否活着（401 是正常的，说明鉴权生效了）
+curl -s -o /dev/null -w "本地     -> %{http_code}\n" http://127.0.0.1:3000/
+
+# 2. 公网是否可达
+curl -s -o /dev/null -w "公网裸访 -> %{http_code}\n" https://<你的域名>/
+#   期望 401
+
+# 3. 带 token 是否换到 Cookie（303）
+TOKEN=$(grep -oE 'token=[A-Za-z0-9_-]+' /workspace/dsh-公网访问地址.txt | head -1 | cut -d= -f2)
+curl -s -o /dev/null -w "带token  -> %{http_code}\n" -c /tmp/ck.txt \
+  "https://<你的域名>/?token=$TOKEN"
+#   期望 303
+
+# 4. 带 Cookie 是否能打开页面（200）
+curl -s -o /dev/null -w "带cookie -> %{http_code}\n" -b /tmp/ck.txt \
+  "https://<你的域名>/"
+#   期望 200
+
+# 5. 关键注入是否生效
+curl -s -b /tmp/ck.txt "https://<你的域名>/" | grep -o '__DSH_TRANSPORT__"\] = {[^}]*}'
+#   期望 __DSH_TRANSPORT__"] = {"ownsHost":true}
+```
+
+作者实测结果（全部通过）：
+
+| 检查项 | 结果 |
+|---|---|
+| 本地桥接 | 401 ✅ |
+| 公网裸访 | 401 ✅ |
+| 带 token | 303 ✅ |
+| 带 cookie | 200 ✅ |
+| `__DSH_TRANSPORT__` | `{"ownsHost":true}` ✅ |
+| mobile-polish CSS | 已注入 ✅ |
+
+最后用手机打开那个链接，确认能用。
+
+---
+
+## 8. 日常使用
+
+```bash
+# 重启服务（改了配置后）
+./scripts/restart.sh
+
+# 看状态
+./scripts/polish.sh status
+
+# 关掉排版优化（保留文件，回到原生样式）
+./scripts/polish.sh off
+
+# 彻底回滚
+./scripts/polish.sh revert
+
+# 停止服务
+pkill -f dsh-public-bridge.js
+pkill -f "dsh web"
+```
+
+**重启后域名会变吗？** 不会。但 **token 每次重启都会重新生成**，
+所以要重新看 `/workspace/dsh-公网访问地址.txt`。
+已经换到 Cookie 的浏览器不受影响（Cookie 有效期 30 天）。
+
+---
+
+## 9. 为什么必须要有「桥接层」
+
+`dsh` 出于安全考虑**主动拒绝绑定 `0.0.0.0`**：
+
+```bash
+$ dsh web --host 0.0.0.0
+error: --host 0.0.0.0 is intentionally not supported yet for safety:
+       it would expose remote code execution to the network; use 127.0.0.1 instead
+```
+
+这个设计是对的（dsh 能执行任意 shell 命令，暴露到网络 = 暴露 RCE），
+但意味着**你没法直接从手机访问**。
+
+桥接层做的事：**在不破坏这个安全约束的前提下**（dsh 仍然只听 `127.0.0.1`），
+用一个中间进程接住公网流量并转发进去。
+
+每一层都对应一个真实踩过的坑：
 
 | 层 | 做什么 | 不这么做会怎样 |
 |---|---|---|
-| **平台 TLS + 网关** | 公网 HTTPS 终止、反代到容器 | 自己配 nginx/证书没必要，平台已处理 |
 | **桥接进程 :3000** | 监听 `0.0.0.0:3000`，转发到 `127.0.0.1:13080` | dsh 拒绝绑 `0.0.0.0`，公网够不着 |
-| **Host 头规范化** | 把网关 Host 改成 dsh 期望的域 | dsh 的 `isTrustedApiRequest` 校验失败 → **401** |
+| **Host 头规范化** | 把网关 Host 改成 dsh 期望的域 | dsh 的 `isTrustedApiRequest` 校验失败 → **401 死循环** |
 | **`--trusted-host` 注入** | 启动 dsh 时带上公网域名 | `/api` 的 `sec-fetch-site` / `origin` 校验拒绝 → **403** |
-| **`__DSH_TRANSPORT__` 注入** | 在页面里补一个全局变量 | 前端判定 `isLoopback=false` → **「settings are unavailable in this browser」** |
+| **`__DSH_TRANSPORT__` 注入** | 页面里补一个全局变量 | 前端判定 `isLoopback=false` → **「settings are unavailable in this browser」** |
 
-### 关键文件
+### 鉴权是怎么工作的
 
-| 文件 | 作用 |
-|---|---|
-| `scripts/dsh-public-bridge.js` | **核心**。公网桥接 + Host 学习/规范化 + dsh 子进程管理 + `__DSH_TRANSPORT__` 注入 |
-| `scripts/restart.sh` | 一键重启：同步插件 → 杀旧进程 → 起桥接 → 健康检查 |
-| `scripts/polish.sh` | 移动端优化插件的启用/关闭/回滚 |
-| `plugins/local-loopback-trust/` | dsh 插件，修「settings 在公网域名下不可用」 |
-| `plugins/mobile-polish/` | dsh 插件，移动端排版优化（**可回滚**） |
+桥接层**完整保留**了 dsh 的原始鉴权，没有做任何绕过：
+
+```
+裸访问          → 401  dsh web authentication required;
+带 ?token=xxx   → 303  换取 Cookie（有效期 30 天，HttpOnly + SameSite=Strict）
+带 Cookie       → 200  正常使用
+```
 
 ---
 
-## 移动端优化插件
+## 10. 移动端排版优化
+
+### 为什么需要
 
 `dsh` 官方前端**没有任何响应式断点**（实测主 CSS 里 `@media max-width` 数量为 **0**），
-所以在手机上看到的是「桌面布局被压缩」，而不是真正的移动端重排。
-官方社区插件 `dsh-mobile` 提供了移动端布局，但排版细节仍偏松散。
+手机上看到的是「桌面布局被压缩」，而不是真正的移动端重排。
 
-本仓库的 `plugins/mobile-polish/` 在其之上做了一层**纯 CSS 排版优化**（+1 个 JS 补丁），
-把「太空旷」的问题逐项压紧：
+官方社区插件 `dsh-mobile` 提供了移动端布局骨架，但排版细节仍偏松散。
+本仓库的 `plugins/mobile-polish/` 在其之上做了一层**纯 CSS 排版优化**：
 
 | 指标 | 原生 | 优化后 | 说明 |
 |---|---|---|---|
@@ -159,28 +432,30 @@ echo 'DSH_PUBLIC_HOST=abc123.app.workbuddy.host' > .env.public
 | 操作栏内部行数 | 3 行 | **1 行** | 时间戳不再独占一行 |
 | 输入区高度 | 141px | **105px** | |
 
-### 用法
+### 设计原则：完全可回滚
 
-```bash
-./scripts/polish.sh on       # 启用
-./scripts/polish.sh status   # 查看状态
-./scripts/polish.sh off      # 关闭（保留文件，回到原生样式）
-./scripts/polish.sh revert   # 彻底回滚（摘除 bundle + 删插件目录 + 恢复 profile 备份）
-```
+插件**从不修改 dsh 源码**。启用时自动备份 `profile/package.json`，
+`revert` 优先从备份恢复。
 
-**设计要点：完全可回滚。** 插件从不修改 dsh 源码，
-启用时自动备份 `profile/package.json`，`revert` 优先从备份恢复。
+回滚验证（实测 7/7 通过）：
 
-完整的技术细节、12 轮迭代的踩坑记录见
+| 指标 | 插件态 | 回滚后（原生） |
+|---|---|---|
+| 表格高 | 75px | 129px |
+| 行内代码高 | 17px | 21px |
+| 标题间距 | 11/5px | 32/16px |
+| 消息列 gap | 4px | 10px |
+
+完整的 12 轮迭代踩坑记录见
 [`plugins/mobile-polish/README.md`](plugins/mobile-polish/README.md)。
 
 ---
 
-## 仓库结构
+## 11. 仓库结构
 
 ```
 dsh-public-deploy/
-├── README.md                  ← 你正在看的
+├── README.md                  ← 你正在看的：部署操作手册
 ├── .env.public.example        公网域名配置样例（复制为 .env.public）
 ├── scripts/
 │   ├── dsh-public-bridge.js   ★ 公网桥接核心
@@ -200,7 +475,7 @@ dsh-public-deploy/
 
 ---
 
-## 常见坑
+## 12. 常见坑
 
 按踩坑顺序排列，每条都有实测证据。完整版见 [`docs/部署说明.md`](docs/部署说明.md)。
 
@@ -210,7 +485,7 @@ dsh-public-deploy/
 `import.meta.main` 在 v22.13.1 下为 `undefined`，v24.20.0 下为 `true`。
 表现是**不报错、不输出**，看起来像卡死。
 
-→ 升级到 Node v24.20.0。
+→ 升级到 Node v24。见[第 2 节](#2-环境要求)。
 </details>
 
 <details>
@@ -227,21 +502,23 @@ npm i -g @deepseek-ai/dsh --allow-scripts=@deepseek-ai/dsh-subprocess-local,koff
 <summary><b>3. dsh 拒绝绑定 0.0.0.0</b></summary>
 
 官方**刻意**这么设计（防止 RCE 暴露）。解法是桥接进程，dsh 仍只听 `127.0.0.1:13080`。
+
+见[第 9 节](#9-为什么必须要有桥接层)。
 </details>
 
 <details>
 <summary><b>4. 平台注入的 PORT 已被占用</b></summary>
 
-平台会注入 `PORT=8089`，但该端口已被沙箱内置的 `sync_server` 占用，绑定必然 `EADDRINUSE`。
+平台会注入 `PORT`（实测为 `8089`），但该端口已被沙箱内置的 `sync_server` 占用，
+绑定必然 `EADDRINUSE`。
 
-→ 桥接进程**忽略** `process.env.PORT`，固定用 3000（发布时 `--port` 也声明 3000，
-网关按 `<port>-<SPACE_KEY>` 子域名路由，两者必须一致）。
+→ 桥接进程**忽略** `process.env.PORT`，固定用 **3000**。
 </details>
 
 <details>
-<summary><b>5. 公网 404 —— 多层根因</b></summary>
+<summary><b>5. 公网 404 / 401 / 403 —— 多层根因</b></summary>
 
-依次排查出：进程模型（平台只代理自启动命令的**直接子进程**）、
+依次排查出：进程模型（平台只代理**直接子进程**监听的端口）、
 Host 改写导致 401、`/api` 403、边缘 CDN 缓存、路由同步延迟。
 </details>
 
@@ -263,24 +540,28 @@ Host 改写导致 401、`/api` 403、边缘 CDN 缓存、路由同步延迟。
 </details>
 
 <details>
-<summary><b>8. mobile-polish 的 12 轮踩坑（选摘）</b></summary>
+<summary><b>8. 公网域名丢失，链接退化成 127.0.0.1</b></summary>
 
-- **CSS Modules hash 后缀**：类名形如 `EvIC1a_column`，必须用 `[class*="_column"]` 子串匹配
-- **`dsh-mobile` 属性前缀坑（复发 5 次）**：只要目标区域 dsh-mobile 也管，
-  必须加同前缀 + `[class]` 抬优先级，否则被压制
-- **flex `gap` 对零高子项照样生效**：3 个 `height:0` 的 spacer 白吃 40px 间隙（反直觉）
-- **`display: inline` 反而比 `inline-flex` 更差**：盒子塌陷后宽度撑满整行
+`restart.sh` 启动桥接时若没传 `DSH_PUBLIC_HOST`，
+访问地址会退化成 `http://127.0.0.1:13080/?token=...`（本地链接，手机打不开）。
 
-详见 [`plugins/mobile-polish/README.md`](plugins/mobile-polish/README.md)。
+→ 写进 `.env.public` 即可，重启时自动加载。见[第 5 节](#5-第-3-步拿到你的公网域名)。
 </details>
 
 <details>
-<summary><b>9. 沙箱内 GitHub 连不上（DNS 被劫持）</b></summary>
+<summary><b>9. 端口被占用时桥接裸崩溃</b></summary>
+
+`EADDRINUSE` 会抛未捕获的 error 事件，栈信息里只有底层细节，无从下手。
+
+→ 现在会明确告知原因和清理命令：`fuser -k 3000/tcp`
+</details>
+
+<details>
+<summary><b>10. 沙箱内 GitHub 连不上（DNS 被劫持）</b></summary>
 
 `github.com` / `api.github.com` / `raw.githubusercontent.com` 等**全部**被解析到
 `198.18.x.x`（RFC 2544 基准测试保留段，非真实地址）。
-向 5 个公共 DNS 直接查询 53 端口返回的也是同一个虚假 IP → **网络层透明劫持**，
-改 `resolv.conf` 无效，只能用 `/etc/hosts` 覆写。
+向 5 个公共 DNS 直接查询 53 端口返回的也是同一个虚假 IP → **网络层透明劫持**。
 
 **最坑的一点**：此时 `gh auth status` 会报
 `The token in GH_TOKEN is invalid.` —— 但 **token 是好的**，
@@ -291,43 +572,90 @@ Host 改写导致 401、`/api` 403、边缘 CDN 缓存、路由同步延迟。
 ./scripts/fix-github-dns.sh check    # 检查状态
 ```
 
-另外两个坑：
-- **`/etc/hosts` 重启后被还原**。官方给的持久化路径 `~/.user_hosts`
-  在本环境**静默失效**（沙箱默认 `awk` 是 mawk 1.3.4，解析合并用的
-  嵌套正则直接 panic `ERR_7`）→ 重启后需重新执行一次脚本
-- **hosts 修好后 `curl` 能通、`git` 却仍报 `gnutls_handshake() failed`**
-  → git 的 TLS 栈更敏感，必须 `git config --global http.version HTTP/1.1`
-
-脚本会把这两件事**一起办掉**，所以直接跑它就行，不用手动补参数。
-
 详见 [`docs/沙箱内连接GitHub.md`](docs/沙箱内连接GitHub.md)。
+</details>
+
+<details>
+<summary><b>11. 重启后 /etc/hosts 被还原</b></summary>
+
+沙箱启动会重置 `/etc/hosts`。官方给的持久化路径 `~/.user_hosts`
+在本环境**静默失效**（沙箱默认 `awk` 是 mawk 1.3.4，解析合并用的
+嵌套正则直接 panic `ERR_7`，且不中断 init 脚本）。
+
+→ 重启后重新执行 `./scripts/fix-github-dns.sh`。
+可挂到 `~/.bashrc.d/` 做自动检查。
+</details>
+
+<details>
+<summary><b>12. hosts 修好后 curl 通、git 却仍握手失败</b></summary>
+
+`curl https://github.com/` 返回 200，但 `git clone` 报
+`gnutls_handshake() failed` —— git 的 TLS 栈比 curl 敏感得多。
+
+→ 必须 `git config --global http.version HTTP/1.1`
+（`fix-github-dns.sh` 会自动设置）
 </details>
 
 ---
 
-## 回滚
+## 13. 回滚
 
 **任何改动都可回滚**，这是本仓库的设计原则。
 
 ```bash
 ./scripts/polish.sh revert    # 移动端插件：完全卸载，恢复原生
+./scripts/fix-github-dns.sh revert   # 移除 GitHub DNS 修复
 ```
 
-回滚后逐项验证（实测 7/7 通过）：
-
-| 指标 | 插件态 | 回滚后（原生） |
-|---|---|---|
-| 表格高 | 75px | 129px |
-| 行内代码高 | 17px | 21px |
-| 标题间距 | 11/5px | 32/16px |
-| 消息列 gap | 4px | 10px |
-
-桥接层如需停止：
+停止服务：
 
 ```bash
 pkill -f dsh-public-bridge.js
 pkill -f "dsh web"
 ```
+
+---
+
+## 14. 附录：WorkBuddy 沙箱环境全景
+
+作者实测的环境信息，供对照（**你的值会不同**）：
+
+### 平台身份
+
+| 变量 | 作者环境的值 | 用途 |
+|---|---|---|
+| `X_IDE_SPACE_KEY` | `9b99622e67154aa9b8593c570ed9ab43` | 网关子域名路由键 |
+| `X_IDE_SPACE_REGION` | `bj7` | 区域 |
+| `X_IDE_SPACE_HOST` | `sandbox.cloudstudio.club` | 网关主域 |
+| `X_IDE_PREVIEW_DOMAIN` | `bj7.sandbox.cloudstudio.club` | 预览域名 |
+| `IDE_APP_ACCESS_URL_DOMAIN` | `preview.cloudstudio.work` | 应用访问域 |
+| `WORKSPACE_NAMESPACE` | `cs-spacelet-v2-headless...` | K8s 命名空间 |
+| `IDE_WORKSPACE_CUSTOM_HOSTS` | `enabled` | 允许自定义 hosts |
+
+### 资源
+
+| 变量 | 值 |
+|---|---|
+| `X_IDE_CPU_LIMIT` | `4` |
+| `X_IDE_MEMORY_LIMIT` | `8G` |
+| `X_IDE_DISK_QUOTA` | `50G` |
+| `X_IDE_GPU_TYPE` | （空） |
+
+### 端口
+
+| 端口 | 占用者 |
+|---|---|
+| `8089` | 沙箱内置 `sync_server`（**别用**） |
+| `65210` | IDE Editor Server |
+| `3000` | ← 我们的桥接（**默认**） |
+| `13080` | ← dsh 本体（仅 127.0.0.1） |
+
+### 网络
+
+- DNS：`183.60.83.19` / `183.60.82.98`（腾讯云）
+- `/etc/hosts` 顺序：`files dns`（files 优先，所以 hosts 覆写有效）
+- 内置代理：`SPACE_PROXY_ENDPOINT`、`X_IDE_AUTH_PROXY`
+- **GitHub 全域名段被劫持到 `198.18.x.x`**（见坑 10）
 
 ---
 
