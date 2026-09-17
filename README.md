@@ -10,8 +10,14 @@
 在 WorkBuddy 沙箱里暴露一个服务，**通用做法**确实只要三步：
 
 > 1. 起个本地服务，监听 `:3000`（Node、Python、Java，甚至静态文件服务器都行）
-> 2. 找到公网域名 `<沙箱ID>.app.workbuddy.host`（在沙箱信息或任务面板里）
+> 2. 找到公网域名 `<容器ID>.app.workbuddy.host`
 > 3. 拼上 `https://` 直接访问 —— CLB 卸载 HTTPS，`sandbox-proxy` 把请求送到你本地 `:3000`
+
+> **关于第 2 步「怎么找域名」**：网上流传的说法是「在沙箱信息或任务面板里能看到」。
+> 作者的实际情况是**从未在任何面板里找过它**——当时是让 AI 助手完成部署，
+> 域名是它自己弄出来的。所以本文不写没验证过的 UI 路径，
+> 只写**在沙箱内实测可复现**的方法（见 [3.1](#31-主入口域名发布接口分配前缀来自-appname) / [3.2](#32-端口网关域名沙箱内可直接算出)）。
+> 下面给出的是**在沙箱内实测可复现**的方法，不依赖任何 UI 入口。
 
 **但 `dsh` 是个例外**：它出于安全考虑**主动拒绝绑定 `0.0.0.0`**
 （因为它能执行任意 shell 命令，暴露到网络等于暴露 RCE），只肯监听 `127.0.0.1`。
@@ -29,8 +35,8 @@
     ▼
 ┌──────────────────────────────────────────────┐
 │  WorkBuddy 平台（TLS 终止 + 网关，无需自建）  │
-│  ① <容器ID>.app.workbuddy.host   ← 主入口     │
-│  ② <PORT>-<SPACE_KEY>.e2b...     ← 按端口映射 │
+│  ① <容器ID>.app.workbuddy.host   ← 前缀推不出 │
+│  ② 3000-<SPACE_KEY>.e2b...       ← 环境变量拼 │
 └──────────────────┬───────────────────────────┘
                    │ 反代到沙箱内某个端口
                    ▼
@@ -53,7 +59,7 @@
 2. [环境要求](#2-环境要求)
 3. [第 1 步：装 dsh](#3-第-1-步装-dsh)
 4. [第 2 步：装移动端插件](#4-第-2-步装移动端插件)
-5. [第 3 步：拿到你的公网域名](#5-第-3-步拿到你的公网域名)
+5. [第 3 步：拿到你的公网域名](#5-第-3-步拿到你的公网域名) ← **最容易卡住的一步，已给出实测方法**
 6. [第 4 步：启动服务](#6-第-4-步启动服务)
 7. [第 5 步：验证](#7-第-5-步验证)
 8. [日常使用](#8-日常使用)
@@ -82,8 +88,8 @@ WorkBuddy 的沙箱（CloudStudio 底座）会**自动**为你提供公网映射
 
 | | 域名形态 | 怎么来 | 映射规则 | 生命周期 |
 |---|---|---|---|---|
-| **① 主入口** | `<容器ID>.app.workbuddy.host` | 平台按容器分配 | 固定指向**一个**端口 | 长期（容器重建后仍有效） |
-| **② 端口网关** | `<PORT>-<SPACE_KEY>.e2b.<REGION>.sandbox.cloudstudio.club` | 由环境变量拼出 | **任意端口各自独立映射** | 跟沙箱会话 |
+| **① 主入口** | `<容器ID>.app.workbuddy.host` | 平台按容器自动分配，**沙箱内推不出前缀** | 固定指向**一个**端口 | 长期（容器重建后仍有效） |
+| **② 端口网关** | `<PORT>-<SPACE_KEY>.e2b.<REGION>.sandbox.cloudstudio.club` | **环境变量直接拼**（沙箱内可算出） | **任意端口各自独立映射** | 跟沙箱会话 |
 
 **实测证据**（作者环境）：
 
@@ -98,15 +104,25 @@ WorkBuddy 的沙箱（CloudStudio 底座）会**自动**为你提供公网映射
 > 实测：另起一个 8081 服务后，`app.workbuddy.host` 仍返回 3000 端口上的 dsh。
 > 所以**你要把服务跑在那个固定端口上** —— 本仓库默认用 **3000**。
 >
-> 主入口前缀是**平台侧的容器标识**，与 `X_IDE_SPACE_KEY`、
-> 以及容器内的 `hostname` 都**不相同**，**不要试图自己拼**（详见 [3.1 节](#31-主入口域名推荐用这个)）。
+> **而端口网关（②）恰好相反**：端口写进子域名里，`3000-` 和 `8081-` 各走各的。
+> 这也是为什么**本仓库推荐用 ②**：它在沙箱内就能自己算出来，不需要去任何地方"找"。
+
+> ### 📌 两个域名的前缀，只有一个是你能自己算出来的
+>
+> | 域名 | 前缀能自己推吗 | 从哪来 |
+> |---|---|---|
+> | ① `a62504992fd8ed07c.app.workbuddy.host` | ❌ **不能** | 平台侧分配，沙箱环境变量里**没有**它 |
+> | ② `3000-9b99622e....e2b.bj7.sandbox.cloudstudio.club` | ✅ **能**，`${X_IDE_SPACE_KEY}` 就在环境变量里 | 直接拼 |
+>
+> **所以：想让别人照着这篇文档复现，就不要依赖 ①。** 详见 [3.1](#31-主入口域名发布接口分配前缀来自-appname)。
 
 ### 关于端口，记住三条
 
 1. **必须监听 `0.0.0.0`**，不能只听 `127.0.0.1`（否则网关够不着）
 2. **不要用平台注入的 `PORT` 变量** —— 实测它可能是 `8089`，而该端口被沙箱内置的
    `sync_server` 占用，绑定必然 `EADDRINUSE`。**自己写死 3000**
-3. 端口号要和你在控制台/网关用的保持一致
+3. **端口号要和域名里的端口号一致** —— 用端口网关域名时，`3000-xxx.e2b.xxx`
+   里的 `3000` 就是你服务监听的端口；用主入口域名时，则必须是它固定映射的那个端口
 
 ---
 
@@ -230,75 +246,202 @@ chmod +x scripts/*.sh
 
 **这一步最容易卡住，看清楚。**
 
-### 3.1 主入口域名（推荐用这个）
+### 最快的办法：一条命令
 
-去 **WorkBuddy 控制台**找你的应用访问域名，形如：
+```bash
+cd dsh-public-deploy
+./scripts/whereami.sh
+```
+
+它会**把三条域名都列出来并实时探测连通性**，作者环境实测输出：
 
 ```
-https://<容器ID>.app.workbuddy.host
+────────────────────────────────────────────────
+ 沙箱公网域名
+────────────────────────────────────────────────
+
+【① 主入口域名】发布接口分配，长期有效
+  https://a62504992fd8ed07c.app.workbuddy.host/     ✅ 通（服务在线，返回鉴权门）
+  https://2100167863587786752.app.workbuddy.host/   ✅ 通（服务在线，返回鉴权门）
+
+【② 端口网关域名】3000 端口，环境变量拼出
+  https://3000-9b99622e...e2b.bj7.sandbox.cloudstudio.club/ ✅ 通（服务在线，返回鉴权门）
+
+────────────────────────────────────────────────
+ 推荐使用：
+   https://a62504992fd8ed07c.app.workbuddy.host/
+────────────────────────────────────────────────
 ```
 
-**这个前缀是平台分配给你的容器标识**，纯小写十六进制（作者环境为 `a62504992fd8ed07c`，16 位）。
+**直接写进配置**（不用手工编辑）：
 
-> ### ⚠️ 不要试图自己拼这个域名
+```bash
+./scripts/whereami.sh --write   # 把推荐域名写入 .env.public
+./scripts/restart.sh            # 重启让配置生效
+```
+
+> 脚本默认按 **3000** 端口探测，换端口用 `./scripts/whereami.sh --port 8080`。
+
+下面解释这两个域名分别是怎么来的，以及**为什么你之前找不到**。
+
+| | 方法 | 怎么拿 | 推荐度 |
+|---|---|---|---|
+| **3.1** | 主入口域名 `<appName>.app.workbuddy.host` | 读 `/root/.workbuddy-sandbox-publish/state.json` | ⭐⭐⭐⭐ 正式用 |
+| **3.2** | 端口网关域名 `<端口>-${X_IDE_SPACE_KEY}.e2b.${X_IDE_SPACE_REGION}.sandbox.cloudstudio.club` | **环境变量一条 `echo`** | ⭐⭐⭐⭐⭐ 调试/兜底 |
+
+---
+
+### 3.1 主入口域名（发布接口分配，前缀来自 `appName`）
+
+形如：
+
+```
+https://<appName>.app.workbuddy.host          ← friendly 域名（好记）
+https://<runtimeId>.app.workbuddy.host        ← uuid 域名（纯数字，平台自动给）
+```
+
+作者环境实测**两个都通**：
+
+```
+https://a62504992fd8ed07c.app.workbuddy.host/        -> 401 ✅
+https://2100167863587786752.app.workbuddy.host/     -> 401 ✅
+```
+
+#### 这个前缀到底从哪来
+
+**不是平台随机分配的，是你发布时自己传的 `appName`。**
+
+沙箱里有个状态文件记录了这一切：
+
+```bash
+cat /root/.workbuddy-sandbox-publish/state.json
+```
+
+```json
+{
+  "runtimeId": "2100167863587786752",
+  "appName": "a62504992fd8ed07c",
+  "lastReleaseId": "1789558190322827706",
+  "createdAt": 1789555606223
+}
+```
+
+对应关系：
+
+| 字段 | 对应域名 |
+|---|---|
+| `appName` | `a62504992fd8ed07c.app.workbuddy.host`（friendly，发布时可选自定义） |
+| `runtimeId` | `2100167863587786752.app.workbuddy.host`（uuid，平台自动生成） |
+
+> ### 📌 所以「域名从哪来」的完整答案是
 >
-> 作者实测：**用当前容器的 hostname 拼出来的域名是 404**。
+> **平台有一个发布动作**，发布时你可以指定 `appName`（不指定就随机生成一个
+> 16 位十六进制串），平台据此在网关层绑定域名。发布结果落在
+> `/root/.workbuddy-sandbox-publish/state.json` 里。
 >
-> | 域名 | 结果 |
+> 调用的是沙箱内部接口 `artifact-releases`（见本文档附录）。
+> **该接口从沙箱外部访问会被拒（`403 path not allowed`）**，只能在发布流程里用。
+>
+> 换句话说：**`a62504992fd8ed07c` 这个前缀，在环境变量里当然找不到——
+> 它是发布参数，不是环境变量。** 它被记在 `state.json` 里。
+
+> ### ⚠️ `hostname` / `X_IDE_SPACE_KEY` 拼不出这个域名
+>
+> | 猜法 | 实测 |
 > |---|---|
-> | `a62504992fd8ed07c.app.workbuddy.host`（控制台给的） | **401** ✅ 指向服务 |
-> | `a70a5a91533d.app.workbuddy.host`（容器内 `hostname` 的值） | **404** ❌ 不存在 |
+> | `a70a5a91533d.app.workbuddy.host`（容器内 `hostname`，12 位） | **404** ❌ |
+> | `9b99622e67154aa9b8593c570ed9ab43.app.workbuddy.host`（`X_IDE_SPACE_KEY`） | **404** ❌ |
+> | `cs-spacelet-v2-cpu-5cdddf685f-sghl8.app.workbuddy.host`（`POD_NAME`） | **404** ❌ |
 >
-> 两个标识看着像（都是十六进制），但**不是一回事**：
->
-> - `a70a5a91533d` = 容器内的 `hostname`，**重启会变**，拼域名没用
-> - `a62504992fd8ed07c` = 平台侧的稳定容器标识，**容器重建后仍然有效**
->   （实测：域名从 9/16 就在用，而当前容器 9/17 23:45 才启动，域名依然通）
->
-> **结论：去控制台复制，别自己拼。**
+> `X_IDE_SPACE_KEY` **只用于端口网关域名**（见 3.2），两者是不同子系统。
 
-拿到后写进配置文件：
+**拿到域名后写进配置文件**：
+
+```bash
+cd dsh-public-deploy
+./scripts/whereami.sh --write    # 自动读 state.json 并写入 .env.public
+```
+
+或者手工来：
+
+```bash
+cp .env.public.example .env.public
+APPNAME=$(python3 -c "import json;print(json.load(open('/root/.workbuddy-sandbox-publish/state.json'))['appName'])")
+echo "DSH_PUBLIC_HOST=${APPNAME}.app.workbuddy.host" > .env.public
+cat .env.public
+```
+
+---
+
+### 3.2 端口网关域名（沙箱内可直接算出）
+
+这条规则是**实测确认**的：域名里带端口号，**任意端口各自独立映射**。
+
+```bash
+# 一条命令直接算出你的公网域名（假设服务监听 3000）
+echo "https://3000-${X_IDE_SPACE_KEY}.e2b.${X_IDE_SPACE_REGION}.sandbox.cloudstudio.club/"
+```
+
+作者环境实测：
+
+```
+X_IDE_SPACE_KEY    = 9b99622e67154aa9b8593c570ed9ab43
+X_IDE_SPACE_REGION = bj7
+
+→ https://3000-9b99622e67154aa9b8593c570ed9ab43.e2b.bj7.sandbox.cloudstudio.club/
+→ HTTP 401 ✅（服务已就绪，返回鉴权门）
+```
+
+拿到后写进配置：
 
 ```bash
 cd dsh-public-deploy
 cp .env.public.example .env.public
 
-# 把你的域名填进去（不要带 https:// 和末尾斜杠）
-echo 'DSH_PUBLIC_HOST=你的ID.app.workbuddy.host' > .env.public
+# 注意：只填 host 部分，不含 https:// 和末尾斜杠
+echo 'DSH_PUBLIC_HOST=3000-9b99622e67154aa9b8593c570ed9ab43.e2b.bj7.sandbox.cloudstudio.club' > .env.public
 ```
 
-### 3.2 或者：用端口网关域名
+> **为什么推荐这条**：它**不依赖发布动作**，也不需要任何 UI 入口，
+> 沙箱内 `echo` 一下就有。适合临时调试、或发布接口不可用时兜底。
 
-如果你想自己拼，用这个规则（**任意端口都自动映射**）：
+**验证映射是否真的打到了你的服务**：
 
 ```bash
-# 从环境变量读
-echo "https://3000-${X_IDE_SPACE_KEY}.e2b.${X_IDE_SPACE_REGION}.sandbox.cloudstudio.club/"
+# 你的服务在 3000 —— 期望 401
+curl -s -o /dev/null -w "3000 -> %{http_code}\n" \
+  "https://3000-${X_IDE_SPACE_KEY}.e2b.${X_IDE_SPACE_REGION}.sandbox.cloudstudio.club/"
+
+# 换个没有服务的端口 —— 期望 500/502/404，总之不是 401
+curl -s -o /dev/null -w "3001 -> %{http_code}\n" \
+  "https://3001-${X_IDE_SPACE_KEY}.e2b.${X_IDE_SPACE_REGION}.sandbox.cloudstudio.club/"
 ```
 
-作者环境实测值：
+#### 两条路的区别
 
-```
-X_IDE_SPACE_KEY    = 9b99622e67154aa9b8593c570ed9ab43
-X_IDE_SPACE_REGION = bj7
-→ https://3000-9b99622e67154aa9b8593c570ed9ab43.e2b.bj7.sandbox.cloudstudio.club/
-```
+| | 主入口（3.1） | 端口网关（3.2） |
+|---|---|---|
+| 域名 | `<appName>.app.workbuddy.host` | `<端口>-<SPACE_KEY>.e2b.<REGION>...` |
+| 端口 | **固定映射**（写死在发布配置里） | **任意端口各自独立** |
+| 依赖 | 需要发布动作 | 不需要，环境变量直接拼 |
+| 稳定性 | 长期有效（容器重建仍在） | 跟沙箱会话 |
+| 适用 | 正式长期使用 | 调试 / 快速验证 |
 
-**两种域名都能用**，选一个即可。区别是：
+---
 
-- 主入口更短、更稳定 → **推荐**
-- 端口网关不依赖你在控制台的配置，适合临时调试
+### 3.3 桥接进程也会自己学
 
-### 3.3 实在不知道域名？
-
-桥接进程支持**运行时学习**：先不设 `DSH_PUBLIC_HOST` 启动，
-然后用任意域名访问一次，它会从请求头里学到并落盘：
+桥接进程支持**运行时学习**：先**不设** `DSH_PUBLIC_HOST` 启动，
+然后用任意域名访问它一次，它会把请求头里的 `Host` 记下来并落盘：
 
 ```
 learned gateway host: 3000-9b99622e...e2b.bj7.sandbox.cloudstudio.club
 ```
 
-下次重启会自动读取。
+下次 `./scripts/restart.sh` 会自动从 `.known-hosts.json` 里读出来。
+
+> **注意**：这条路需要你**先知道域名才能访问**，所以它只解决「忘了填配置」，
+> 不解决「不知道域名」。真要不知道，用 3.1（读 `state.json`）或 3.2（环境变量拼）。
 
 ---
 
@@ -309,10 +452,13 @@ cd dsh-public-deploy
 ./scripts/restart.sh
 ```
 
+> 启动前确认 `.env.public` 里的 `DSH_PUBLIC_HOST` 已经填好（见 [第 5 节](#5-第-3-步拿到你的公网域名)），
+> 否则输出的访问链接会退化成 `http://127.0.0.1:13080/...`，手机打不开。
+
 预期输出：
 
 ```
-==> 公网域名：a62504992fd8ed07c.app.workbuddy.host
+==> 公网域名：3000-9b99622e67154aa9b8593c570ed9ab43.e2b.bj7.sandbox.cloudstudio.club
 ==> 同步 local-loopback-trust 插件到 profile
     已同步到 /root/.dsh/profiles/web/node_modules/dsh-local-loopback-trust
     profile bundles: @deepseek-ai/dsh-base, @deepseek-ai/dsh-web-app, dsh-mobile, ...
@@ -496,6 +642,7 @@ dsh-public-deploy/
 ├── .env.public.example        公网域名配置样例（复制为 .env.public）
 ├── scripts/
 │   ├── dsh-public-bridge.js   ★ 公网桥接核心
+│   ├── whereami.sh            ★ 找出你的公网域名（并探测连通性）
 │   ├── restart.sh             ★ 一键重启（自动加载 .env.public）
 │   ├── polish.sh              ★ 移动端插件开关/回滚
 │   ├── fix-github-dns.sh      修沙箱内 GitHub DNS 劫持
@@ -670,13 +817,84 @@ pkill -f "dsh web"
 | `WORKSPACE_NAMESPACE` | `cs-spacelet-v2-headless...` | K8s 命名空间 |
 | `IDE_WORKSPACE_CUSTOM_HOSTS` | `enabled` | 允许自定义 hosts |
 
-### 容器标识（三个值互不相同，别搞混）
+### 容器标识（四个值互不相同，别搞混）
 
 | 名称 | 作者环境的值 | 特征 |
 |---|---|---|
 | **容器内 `hostname`** | `a70a5a91533d`（12 位） | 进程可见，**重启会变**，拼域名会 404 |
-| **主入口域名前缀** | `a62504992fd8ed07c`（16 位） | 平台侧稳定标识，**容器重建后仍有效** |
-| **`X_IDE_SPACE_KEY`** | `9b99622e67154aa9b8593c570ed9ab43` | 只用于网关子域名路由 |
+| **主入口域名前缀（`appName`）** | `a62504992fd8ed07c`（16 位） | **发布时指定的参数**，记在 `state.json`，容器重建后仍有效 |
+| **`runtimeId`** | `2100167863587786752`（19 位纯数字） | 平台生成的发布 ID，对应 uuid 域名 |
+| **`X_IDE_SPACE_KEY`** | `9b99622e67154aa9b8593c570ed9ab43` | 只用于**端口网关子域名**路由，**不用于** `app.workbuddy.host` |
+| **`POD_NAME`** | `cs-spacelet-v2-cpu-5cdddf685f-sghl8` | K8s Pod 名，**和上面都无关** |
+
+**这些值互相推不出来**——这是本节最值得记住的一句话。
+
+### 域名来源速查
+
+| 域名 | 沙箱内能否自主获得 | 方法 |
+|---|---|---|
+| `<appName>.app.workbuddy.host` | ✅ **能** | 读 `/root/.workbuddy-sandbox-publish/state.json` 的 `appName` |
+| `<runtimeId>.app.workbuddy.host` | ✅ **能** | 同上文件的 `runtimeId` |
+| `3000-<SPACE_KEY>.e2b.<REGION>.sandbox.cloudstudio.club` | ✅ **能** | `echo "https://3000-${X_IDE_SPACE_KEY}.e2b.${X_IDE_SPACE_REGION}.sandbox.cloudstudio.club/"` |
+| `preview.cloudstudio.work` 系列 | ⚠️ 能解析，但**未验证能否映射到服务** | 环境变量 `IDE_APP_ACCESS_URL_DOMAIN` 指向它 |
+| 平台 API `codingcorp.cloudstudio.net/api` | ❌ 走不通 | 根路径 404，其余 302 跳登录，**无公开查询接口** |
+
+### 发布接口：域名是怎么被绑定的
+
+平台的发布动作会调用沙箱内部接口：
+
+```
+POST http://codebuddy.auth-proxy.local/v2/agentos/artifact-releases
+```
+
+关键请求字段：
+
+| 字段 | 说明 |
+|---|---|
+| `runtimeId` | 19 位大整数，**超过 JS `Number.MAX_SAFE_INTEGER`，必须手工拼字符串**，用 `JSON.stringify` 会丢精度 |
+| `port` | 要暴露的端口（本仓库用 `3000`） |
+| `appName` | **域名前缀就是它**（配合 `useAppNameAsDomain: true`） |
+| `persistent` | `true` = 长期有效 |
+| `expire` | 有效期（秒），示例 `157680000` ≈ 5 年 |
+
+返回体里域名有两组：
+
+```json
+"data": {
+  "releaseUrl": "https://<appName>.app.workbuddy.host/",
+  "domains": {
+    "friendlyDomains": ["<appName>.app.workbuddy.host"],
+    "uuidDomains":     ["<runtimeId>.app.workbuddy.host"]
+  }
+}
+```
+
+> ### ⚠️ 这个接口**从沙箱里直接调不通**
+>
+> 实测 GET / POST 都返回：
+>
+> ```json
+> {"error":{"message":"path not allowed","type":"forbidden","code":403}}
+> ```
+>
+> 它只允许发布流程内部调用。**但发布结果落在**
+> `/root/.workbuddy-sandbox-publish/state.json`，**该文件随时可读**——
+> 这就是沙箱内获取域名的可靠来源。
+
+### 沙箱出网实测对照
+
+| 域名 | 结果 | 说明 |
+|---|---|---|
+| `github.com`（修复前） | **198.18.x.x** ❌ | 被劫持，见坑 10 |
+| `github.com`（修复后） | 200 ✅ | hosts 覆写后正常 |
+| `www.baidu.com` | 200 ✅ | 正常 |
+| `mirrors.tencent.com` | 200 ✅ | 正常 |
+| `registry.npmjs.org` | 000 ❌ | 不通 |
+| `pypi.org` | 000 ❌ | 不通 |
+| `codingcorp.cloudstudio.net` | 404 / 302 ⚠️ | DNS 通，无公开接口 |
+
+> 沙箱出网**不是全通**，装依赖优先用国内镜像。
+
 
 ### 资源
 
