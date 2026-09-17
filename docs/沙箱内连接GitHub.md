@@ -9,16 +9,20 @@
 
 ```bash
 cd dsh-public-deploy
-./scripts/fix-github-dns.sh          # 一键修复
+./scripts/fix-github-dns.sh          # 一键修复（含 git 配置）
 ./scripts/fix-github-dns.sh check    # 检查状态
 ./scripts/fix-github-dns.sh revert   # 移除修复
 ```
 
-如果 `git push` 仍报 TLS 错误，加上这两个参数：
+脚本会同时做两件事，**两件都必要**：
 
-```bash
-git -c http.version=HTTP/1.1 -c http.postBuffer=524288000 push origin main
-```
+1. 把 GitHub 真实 IP 写进 `/etc/hosts`（绕过 DNS 劫持）
+2. 设置 `git config --global http.version HTTP/1.1`（绕开 TLS 握手问题）
+
+> **重要**：`hosts` 修好之后，`curl` 能通但 `git clone` 仍可能报
+> `gnutls_handshake() failed` —— git 的 TLS 栈比 curl 敏感得多。
+> 第 2 步不能省。实测：设了 `http.version=HTTP/1.1` 后，
+> 无需任何额外参数即可正常 `git clone`。
 
 ---
 
@@ -185,26 +189,35 @@ echo 'getent hosts github.com | grep -q 198.18 && /workspace/dsh-public-deploy/s
 
 ---
 
-## 坑：push 时 TLS 连接被掐断
+## 坑：hosts 修好了，但 git 仍然握手失败
 
-IP 写对之后，小请求（`git ls-remote`、`clone` 小仓库）往往正常，
-但 `push` 体积稍大时可能报：
+现象很迷惑：`curl https://github.com/` 返回 **200**，
+但同一个域名 `git clone` 却报：
 
 ```
-GnuTLS recv error (-110): The TLS connection was non-properly terminated
+gnutls_handshake() failed: The TLS connection was non-properly terminated.
 ```
 
-这是 git 默认的 HTTP/2 + 大 buffer 在受限网络下不稳导致的。对策：
+**原因**：git 用的 GnuTLS 栈比 curl 敏感，在这类受限网络下默认的
+HTTP/2 + 大 buffer 组合会被中断。对策（写进全局配置即可，一次生效）：
+
+```bash
+git config --global http.version HTTP/1.1
+git config --global http.postBuffer 524288000
+```
+
+实测对比（同一时刻、同一域名）：
+
+| 配置 | `git clone` 结果 |
+|---|---|
+| 默认（HTTP/2） | ❌ `gnutls_handshake() failed` |
+| `http.version=HTTP/1.1` | ✅ 成功 |
+| 再加 `http.postBuffer` | ✅ 成功 |
+
+如果不想改全局，也可以按次加参数：
 
 ```bash
 git -c http.version=HTTP/1.1 -c http.postBuffer=524288000 push origin main
-```
-
-也可以写进 `.git/config` 固化：
-
-```bash
-git config http.version HTTP/1.1
-git config http.postBuffer 524288000
 ```
 
 ---
@@ -270,4 +283,14 @@ gh auth login
 | 2 | hosts 是否生效 | `grep '^hosts' /etc/nsswitch.conf` | `files dns`（files 在前） |
 | 3 | token 是否有效 | `curl --resolve api.github.com:443:<IP> -H "Authorization: Bearer $T" https://api.github.com/user` | 返回用户 JSON |
 | 4 | IP 是否可用 | `curl -s -o /dev/null -w '%{http_code}' https://github.com/` | `200` |
-| 5 | push 是否稳定 | 加 `-c http.version=HTTP/1.1` | 成功 |
+| 5 | git 是否配了 HTTP/1.1 | `git config --global http.version` | `HTTP/1.1` |
+
+> 1~4 全绿但 git 仍失败 → 一定是第 5 条。
+
+### 一条命令全搞定
+
+```bash
+./scripts/fix-github-dns.sh
+```
+
+它会依次处理 hosts 与 git 配置，并自动跑完 1~5 项检查。

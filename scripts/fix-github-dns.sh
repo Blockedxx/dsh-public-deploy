@@ -79,6 +79,14 @@ apply_fix() {
     echo "$MARKER_END"
   } >> "$HOSTS_FILE"
   c_ok "    已写入 ${#GITHUB_ENTRIES[@]} 条记录到 $HOSTS_FILE"
+
+  # git 的 TLS 栈比 curl 敏感：即使 hosts 已正确，
+  # 不加 http.version=HTTP/1.1 仍会 GnuTLS 握手失败。
+  # 顺手固化到全局配置（幂等）。
+  git config --global http.version HTTP/1.1 2>/dev/null \
+    && c_ok "    已设置 git http.version=HTTP/1.1"
+  git config --global http.postBuffer 524288000 2>/dev/null \
+    && c_ok "    已设置 git http.postBuffer=524288000"
   echo
   check_status
 }

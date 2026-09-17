@@ -295,7 +295,10 @@ Host 改写导致 401、`/api` 403、边缘 CDN 缓存、路由同步延迟。
 - **`/etc/hosts` 重启后被还原**。官方给的持久化路径 `~/.user_hosts`
   在本环境**静默失效**（沙箱默认 `awk` 是 mawk 1.3.4，解析合并用的
   嵌套正则直接 panic `ERR_7`）→ 重启后需重新执行一次脚本
-- **push 时 TLS 被掐断** → 加 `-c http.version=HTTP/1.1`
+- **hosts 修好后 `curl` 能通、`git` 却仍报 `gnutls_handshake() failed`**
+  → git 的 TLS 栈更敏感，必须 `git config --global http.version HTTP/1.1`
+
+脚本会把这两件事**一起办掉**，所以直接跑它就行，不用手动补参数。
 
 详见 [`docs/沙箱内连接GitHub.md`](docs/沙箱内连接GitHub.md)。
 </details>
