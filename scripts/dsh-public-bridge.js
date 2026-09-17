@@ -478,7 +478,7 @@ function publishAccessUrl(token) {
   } catch (err) {
     console.log(`failed to write access url file: ${err.message}`);
   }
-  console.log(`public access url: ${url}`);
+  console.log(`public access url: ${publicUrl || localUrl}`);
 }
 
 function relay(stream, sink) {
