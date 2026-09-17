@@ -1,0 +1,32 @@
+{
+  "name": "dsh-local-loopback-trust",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Opt-in loopback trust for a reverse-proxied DeepSeek Harness Web UI. Injects globalThis.__DSH_TRANSPORT__ = { ownsHost: true } through the official webserver/index-inject row, so client plugins that gate on Connection.isLoopback (notably Settings → Models) stay functional when the page authority is not a loopback hostname.",
+  "type": "module",
+  "main": "./lib/index.mjs",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "exports": {
+    ".": {
+      "default": "./lib/index.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.mjs",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "loopback",
+    "reverse-proxy"
+  ],
+  "license": "MIT"
+}

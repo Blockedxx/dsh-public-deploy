@@ -1,0 +1,34 @@
+{
+  "name": "dsh-mobile-polish",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Non-invasive mobile layout polish for the DeepSeek Harness Web UI. Injects a scoped stylesheet through the official webserver/index-inject pipeline to tighten vertical rhythm, collapse debug-only rows, and add reply affordances on narrow screens. Fully reversible: disable the flag, drop the bundle, or delete the package — the stock styles were never modified.",
+  "type": "module",
+  "main": "./lib/index.mjs",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "exports": {
+    ".": {
+      "default": "./lib/index.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.mjs",
+    "lib/mobile-polish.css",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "mobile",
+    "css",
+    "theme"
+  ],
+  "license": "MIT"
+}

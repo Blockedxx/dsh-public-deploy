@@ -1,0 +1,15 @@
+# Community bundle for the stock DSH Web profile.
+#
+# 本层只做一件事：把「反向代理页面按 loopback 授权」的声明交给官方注入管线。
+# 它不修改 DSH 任何源码文件，也不改变前端构建产物。
+- insert:
+    - id: local-loopback-trust
+      name: dsh-local-loopback-trust
+      config:
+        # ⚠️ 安全边界放宽开关。开启后 Settings（含模型提供方与凭据字段）
+        # 会对所有能访问本服务 URL 的人可读写。
+        # 仅在访问控制可靠（token/cookie 鉴权、内网限制等）时设为 true。
+        enabled: true
+        payload:
+          ownsHost: true
+        verbose: false

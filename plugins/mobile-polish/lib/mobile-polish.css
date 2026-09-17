@@ -1,0 +1,1224 @@
+/* ============================================================================
+ * dsh-mobile-polish —— 移动端聊天页排版优化  (v8)
+ * ============================================================================
+ * 【v8 修复真机实测的 3 个问题】
+ *
+ *   #1 太空旷 —— 重新定位：不是气泡，是 **底部 composer**
+ *      实测 composerSeat 高 143px，在 741px 视口里占 19.3%。
+ *      输入框与按钮行之间有一条空白带，纯浪费。本版压到 ~110px。
+ *
+ *   #2 底部统计文字被截断
+ *      实测 bOPqQW_label 出现「宽 93 / 内容 116」→ 被 ellipsis 吃掉 23px。
+ *      根因：pill 是 flex:0 1 auto（可收缩）+ label overflow:hidden。
+ *      容器 bOPqQW_root 宽 283，两 pill 共需 323 → 溢出 40px。
+ *      本版：允许 label 收缩但不截断（去 ellipsis），并压缩 pill 内 gap。
+ *
+ *   #3 会话列表点击后抽屉不收回 —— **改由 JS 补丁接管**（见 lib/drawer-autoclose.mjs）
+ *      根因：dsh-mobile 的 closeDrawerAfterSessionAction 挂在 .dshm-drawer 上，
+ *      但该元素在原生布局下**从未渲染**（实测 drawerCount=0），
+ *      所以 handler 根本没绑上。详见 JS 补丁头部注释。
+ *
+ * ⚠️ 三个修复均可独立开关，见 cordis.patch.yml 的 config 字段。
+ * ============================================================================
+ * 【v7 关键突破：与 dsh-mobile 插件的优先级之争】
+ *
+ * v6 明明写了正确规则却不生效，运行时扫描 CSSOM 才找到真凶：
+ * 那些 `flex:1 1 100%` / `order:2` / `flex-wrap:wrap` / `padding:9px`
+ * 根本不是 dsh 原生样式，而是 **dsh-mobile 插件注入的移动端适配样式**！
+ *
+ *   [data-dsh-mobile-center] [class*="_timeStart"] {
+ *     flex: 1 1 100% !important;      ← 优先级 (0,2,0)
+ *     order: 2 !important;
+ *   }
+ *   [data-dsh-mobile-center] [class*="_actions"]:has(> [class*="_timeStart"]) {
+ *     flex-wrap: wrap !important;     ← 优先级 (0,2,1)
+ *     min-height: 28px !important;
+ *   }
+ *
+ * 我写的 [class*="timeStart"] 只有 (0,1,0)，**比它低一档**，
+ * 所以即使带 !important 也赢不了（!important 只在同优先级内比大小）。
+ *
+ * 【v7 修法】给自己的选择器加上同样的 [data-dsh-mobile-center] 前缀，
+ * 把优先级提到同一档，靠【加载顺序靠后】取胜（后出现者胜）。
+ * 为保险起见，关键规则再加一层 :where() 提升 —— 见下方注释。
+ *
+ * 【教训】排查 CSS 覆盖问题时，不要只看 computed 值，要扫 CSSOM 找出
+ *         **所有命中该元素的规则及其来源** —— 否则会误判成"原生样式"而
+ *         把力气花在错误的方向上（前 6 个版本就是这么绕远的）。
+ * ========================================================================== */
+
+/* ============================================================================
+ * dsh-mobile-polish —— 移动端聊天页排版优化  (v9)
+ * ============================================================================
+ * 【v9 用户指定三项调整】
+ *
+ *   1. 正文字号 14px → **12px**
+ *   2. 行高同步 **−2px**（24px → 22px）
+ *   3. **顶部导航栏压缩**（76px → 约 56px）
+ *
+ * 【字号/行高为什么这么改 —— 重要】
+ * 实测发现 `--dsh-content-font-size` 定义在 **body** 上，不是 :root：
+ *
+ *   document.documentElement → "--dsh-content-font-size" = (空)
+ *   body                    → "--dsh-content-font-size" = 14px
+ *   body                    → "--dsh-content-font-delta" = calc(14px - 14px)
+ *
+ * 所以在 :root 单独设变量**没用** —— body 自己的定义会盖过继承值。
+ * 必须 **body 与 :root 同时覆盖**。
+ *
+ * 另外行高 `line-height: 24px` 在原生是**硬编码**的，不走变量，
+ * 所以行高必须单独用选择器覆盖，光改变量没用。
+ *
+ * ⚠️ 字号 12px 在手机上偏小（系统默认正文多为 14~16px），
+ *    若觉得吃力，把下面 `--dsh-content-font-size` 改回 13px 即可。
+ *
+ * ----------------------------------------------------------------------------
+ * 【v10 追加】块间距 16px → 6px，行高 22px → 18px
+ *
+ * 用户反馈「这个行间距怎么这么大？？？？？？」。实测定位到真凶：
+ *   v4~v9 一直在压 `--dsh-chat-flow-gap`（消息与消息之间），
+ *   但**消息块内部** markdown 段落的 margin 从未碰过，一直是原生 16px。
+ *   段落本身只有 22px 高，前后各 16px → 间隙占行高 73%。
+ *
+ * 修复前 → 修复后（381×741 实测）：
+ *   段落块间距  16px  →  6px
+ *   正文行高    22px  →  18px   （行高比 1.83 → 1.5）
+ *   气泡行高    19px  →  16px
+ *   输入框行高  22px  →  18px
+ *   消息间距   6px  →  4px
+ *
+ * ⚠️ 原生 margin 是**长手 margin-top / margin-bottom 各 16px**，
+ *    相邻块会 margin collapse 折叠成 16px（不是 32px），
+ *    所以必须同时改 mt 和 mb，只改一个会被另一个折叠掉。
+ * ============================================================================ */
+
+@media (max-width: 720px) {
+
+  /* ==========================================================================
+   * 【v9-1/2】正文字号 12px（v10 起行高统一 18px，见下方 v10-2 段）
+   * --------------------------------------------------------------------------
+   * 同时覆盖 :root 与 body：变量实际定义在 body，只改 :root 不生效。
+   * 顺带保留 v4 起就有的消息间距变量覆盖（v10 起 16px → 4px）。
+   * ======================================================================== */
+  :root,
+  body {
+    --dsh-content-font-size: 12px;
+    --dsh-content-font-delta: calc(12px - 14px);
+    --dsh-chat-flow-gap: 2px;   /* v11 起 = 2px（唯一声明点，勿在别处再写） */
+  }
+
+  /* 正文字号；行高在 v10-2 段统一为 18px（此处不再重复声明，避免自相覆盖） */
+  [class*="_markdown_"],
+  [class*="_markdown_"] p,
+  [class*="_markdown_"] li,
+  [class*="_markdown_"] td,
+  [class*="_markdown_"] th,
+  [class*="hWmORq_body"] {
+    font-size: 12px !important;
+    line-height: 18px !important;
+  }
+
+  /* 回复根节点行高同步 */
+  [class*="hWmORq_root"] {
+    line-height: 18px !important;
+  }
+
+  /* 用户气泡：字号 12px。
+     ⚠️ 气泡行高【只在这里】声明：v11 起为 15px。
+        曾在 v9 因另一处写 1.5、v10 又写 16px 而反复冲突，
+        现定死"气泡行高全文件唯一声明点 = 此处"。 */
+  [class*="_bubble"] {
+    font-size: 12px !important;
+    line-height: 15px !important;
+  }
+
+  /* 输入框同步 12px，行高 18px */
+  [class*="composerStack"] textarea,
+  [class*="composerStack"] [class*="editor"],
+  [class*="uV2eYG_input"] {
+    font-size: 12px !important;
+    line-height: 18px !important;
+  }
+
+  /* 各级标题字号按比例下调，保持层次。
+     行高统一交给下方 v10-2 段（h1 24 / h2 22 / h3 20 / h4-h6 18），
+     此处不重复声明行高，避免同文件两条规则互相覆盖。 */
+  [class*="_markdown_"] h1 { font-size: 18px !important; }
+  [class*="_markdown_"] h2 { font-size: 16px !important; }
+  [class*="_markdown_"] h3 { font-size: 14px !important; }
+  [class*="_markdown_"] h4,
+  [class*="_markdown_"] h5,
+  [class*="_markdown_"] h6 { font-size: 13px !important; }
+
+  /* 代码块字号：12px 下比正文再小会难认，与正文齐平（行高见 v10-2 段） */
+  [class*="md-code-block"] pre,
+  [class*="_markdown_"] pre,
+  [class*="_markdown_"] pre code {
+    font-size: 12px !important;
+  }
+
+  /* ==========================================================================
+   * 【v11】全域压缩：在 v10 基础上把剩余空间大户全部再收一轮
+   * --------------------------------------------------------------------------
+   * 用户反馈「还是太空旷，在全部压缩」。
+   * 先做了全量空间审计（扫所有元素的 padding/margin/gap/line-height），
+   * 按"占纵向空间"排序，逐个压：
+   *
+   *   位置                      v10    v11    说明
+   *   ─────────────────────────────────────────────────────────────
+   *   段落块间距                 6px    3px   11 处 × 6px = 66px
+   *   标题上间距                10px    6px   截图里 5 个标题
+   *   标题下间距                 4px    2px
+   *   列表缩进                  18px   15px
+   *   用户气泡 padding-y         8px    5px   32 → 26px
+   *   回复操作行                36px   28px   按钮 34 → 28px
+   *   折叠头「N tool calls」     33px   26px   label 行高 24 → 20px
+   *   输入区按钮行              42px   36px
+   *   底部状态行                19px   16px
+   *   输入区整体               125px  ~110px
+   *
+   * ⚠️ 段落间距 3px 是下限 —— 再小段落会糊成一片，失去分段可读性。
+   *    这是刻意保留的"呼吸感"，不是漏压。
+   * ======================================================================== */
+
+  /* ---- v11-1 段落块间距 6px → 3px ---- */
+  [class*="_markdown_"] > * {
+    margin-top: 3px !important;
+    margin-bottom: 3px !important;
+  }
+  [class*="_markdown_"] > :first-child { margin-top: 0 !important; }
+  [class*="_markdown_"] > :last-child  { margin-bottom: 0 !important; }
+
+  /* ---- v11-2 标题 10/4 → 6/2 ---- */
+  [class*="_markdown_"] h1,
+  [class*="_markdown_"] h2,
+  [class*="_markdown_"] h3,
+  [class*="_markdown_"] h4,
+  [class*="_markdown_"] h5,
+  [class*="_markdown_"] h6 {
+    margin-top: 6px !important;
+    margin-bottom: 2px !important;
+  }
+  [class*="_markdown_"] > h1:first-child,
+  [class*="_markdown_"] > h2:first-child,
+  [class*="_markdown_"] > h3:first-child,
+  [class*="_markdown_"] > h4:first-child,
+  [class*="_markdown_"] > h5:first-child,
+  [class*="_markdown_"] > h6:first-child {
+    margin-top: 0 !important;
+  }
+
+  /* ---- v11-3 列表：缩进 18 → 15px，列表间距同步 3px ---- */
+  [class*="_markdown_"] ul,
+  [class*="_markdown_"] ol {
+    margin-top: 3px !important;
+    margin-bottom: 3px !important;
+    padding-left: 15px !important;
+  }
+  [class*="_markdown_"] li {
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+  }
+  [class*="_markdown_"] li > p {
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+  }
+
+  /* ---- v11-4 代码块 / 引用 / 表格（基线间距，v14 在其上做局部覆盖） ---- */
+  [class*="_markdown_"] pre,
+  [class*="_markdown_"] blockquote,
+  [class*="_markdown_"] table {
+    margin-top: 3px !important;
+    margin-bottom: 3px !important;
+  }
+  [class*="_markdown_"] hr {
+    margin-top: 6px !important;
+    margin-bottom: 6px !important;
+  }
+
+  /* ==========================================================================
+   * 【v14】markdown 正文排版优化   ★ 用户：「md回复正文格式能不能优化，这个格式好丑」
+   * --------------------------------------------------------------------------
+   * 实测（381×741，一篇含全要素的 markdown 回复）发现 6 处观感问题：
+   *
+   *  元素            改前实测                          问题
+   *  ────────────────────────────────────────────────────────────────────────
+   *  H3 标题         lh20  mt6 mb2                     与正文仅隔 2px → 像加粗正文
+   *  行内 code       display:inline-flex  h=23px       比正文行高 18px 还高
+   *                  lh19px  字号10.5px                → 撑高整行、把句号挤下去
+   *  代码块容器      128px，其中 header 占 46px          header 空档过大
+   *  代码块 pre      lh19.375px                        非整数行高，渲染发虚
+   *  blockquote      pl14                              比列表缩进小，不统一
+   *  表格行          h=39px                            行高过大，表格很空
+   *
+   * 【① 行内代码 —— 本次最有价值的一处修复】
+   * 关键发现：原生行内 code 是 `display: inline-flex`，**高 23px**
+   * 而正文行高只有 18px —— 它把整行撑高，导致末尾的「。」被挤到下一行
+   * 形成孤字（截图可见）。
+   *
+   * ⚠️ 试错记录（A/B/C 三方案实测对比）：
+   *   方案              代码高   代码宽    判定
+   *   ────────────────────────────────────────────
+   *   改前 inline-flex   23px    81px     ← 撑高整行
+   *   A: display:inline  34px    296px    ❌ 更差！
+   *   B: inline-block    17px    83px     ✅ 最优
+   *   C: inline+pad0     32px    296px    ❌ 更差
+   *
+   * **为什么 A/C 反而更差**：`display: inline` 会让元素变成匿名行内盒，
+   * 盒子塌陷后宽度变成整行 296px（撑满），高度算成内容盒 34px。
+   * **只有 `display: inline-block` 能同时约束宽高** —— 这是本次的关键教训：
+   * 「行内元素」和「行内块」在 flex 语境下行为完全不同，别想当然。
+   *
+   * 【② 代码块 header 瘦身】
+   * 结构实测：
+   *   _block_rsn9u_4.md-code-block   高128px  bg=rgb(249,250,251)  br=10px
+   *     ├─ header (js | Copy)         占 46px
+   *     └─ _content_rsn9u_74  高82px
+   *          └─ pre.shiki     高82px  pt12 pb12
+   * 把 header padding 压到 4px 10px、pre 压到 8px 10px，
+   * 同时 code-block 自身 padding 归零（否则叠加）。
+   *
+   * 【③ 标题间距】6/2 → 11/5
+   * v11 曾把标题压到 mb2，结果标题和下文糊在一起，失去层级感。
+   * 这里适度回调 —— **该省的是段落之间的冗余，不是标题的呼吸空间**。
+   *
+   * 【声明分工】本节是以下属性的唯一声明点，其他段不得重复：
+   *   · h1~h6 的 margin        → v14-1（覆盖 v11-2）
+   *   · 行内 code 的 display/字号/行高 → v14-2
+   *   · md-code-block 的 padding / pre 的 padding+行高 → v14-3
+   *   · ul/ol 的 padding-left  → v14-4（覆盖 v11-3 的 15px）
+   *   · blockquote 的 padding/margin → v14-5
+   *   · th/td 的 padding/行高  → v14-6
+   * ======================================================================== */
+
+  /* ---- v14-1 标题层级感：mt6/mb2 → mt11/mb5（覆盖 v11-2） ---- */
+  [class*="_markdown_"] h1,
+  [class*="_markdown_"] h2,
+  [class*="_markdown_"] h3,
+  [class*="_markdown_"] h4,
+  [class*="_markdown_"] h5,
+  [class*="_markdown_"] h6 {
+    margin-top: 11px !important;
+    margin-bottom: 5px !important;
+  }
+  [class*="_markdown_"] > h1:first-child,
+  [class*="_markdown_"] > h2:first-child,
+  [class*="_markdown_"] > h3:first-child,
+  [class*="_markdown_"] > h4:first-child,
+  [class*="_markdown_"] > h5:first-child,
+  [class*="_markdown_"] > h6:first-child {
+    margin-top: 0 !important;
+  }
+
+  /* ---- v14-2 行内代码：inline-flex 23px → inline-block 17px ---- */
+  [class*="_markdown_"] p code,
+  [class*="_markdown_"] li code,
+  [class*="_markdown_"] td code,
+  [class*="_markdown_"] th code,
+  [class*="_markdown_"] a code {
+    display: inline-block !important;
+    white-space: nowrap !important;
+    font-size: 11px !important;
+    line-height: 13px !important;
+    padding: 1px 4px !important;
+    border-radius: 4px !important;
+    vertical-align: middle !important;
+    margin: 0 1px !important;
+  }
+
+  /* ---- v14-3 代码块：header 瘦身 + 行高取整 ---- */
+  [class*="md-code-block"] {
+    padding: 0 !important;
+    overflow: hidden !important;
+  }
+  /* header 行（含语言名 + Copy 按钮）—— 排除 content 区 */
+  [class*="md-code-block"] > div:first-child:not([class*="content"]) {
+    padding: 4px 10px !important;
+    min-height: 0 !important;
+  }
+  [class*="md-code-block"] [class*="content"] {
+    padding: 0 !important;
+  }
+  [class*="_markdown_"] pre {
+    padding: 8px 10px !important;
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+    border-radius: 0 !important;
+  }
+  [class*="_markdown_"] pre code {
+    font-size: 11.5px !important;
+    line-height: 18px !important;
+  }
+
+  /* ---- v14-4 列表缩进统一 15 → 18px（覆盖 v11-3） ---- */
+  [class*="_markdown_"] ul,
+  [class*="_markdown_"] ol {
+    padding-left: 18px !important;
+  }
+
+  /* ---- v14-5 引用块：与列表缩进对齐 ---- */
+  [class*="_markdown_"] blockquote {
+    padding: 3px 0 3px 10px !important;
+    margin-top: 7px !important;
+    margin-bottom: 7px !important;
+  }
+
+  /* ---- v14-6 表格：行高 39px → 25px ---- */
+  [class*="_markdown_"] th,
+  [class*="_markdown_"] td {
+    padding: 4px 8px !important;
+    height: auto !important;
+    line-height: 16px !important;
+  }
+  [class*="_markdown_"] table {
+    width: 100% !important;
+  }
+
+  /* ---- v14-7 分割线 ---- */
+  [class*="_markdown_"] hr {
+    margin-top: 10px !important;
+    margin-bottom: 10px !important;
+  }
+
+  /* ---- v11-5 用户气泡：内边距 8px 14px → 5px 12px（32 → 26px） ---- */
+  [class*="_bubble"] {
+    padding: 5px 12px !important;
+  }
+
+  /* 气泡行高已在文件开头声明（v11 = 15px），此处不重复 —— 避免同优先级互相覆盖 */
+
+  /* ==========================================================================
+   * ---- v11-6 回复操作行：36px → 28px ----
+   * --------------------------------------------------------------------------
+   * 【v11 第一版失败，原因：选择器对了但属性名猜错】
+   * probe 实测（querySelectorAll('*') 全扫后代）：
+   *   TS9iAW_root        h=36px  gap=16px        ← 根
+   *     xzv4MW_actions   h=34px  minH=28px  gap=2px 6px
+   *       xzv4MW_action  h=34px  w=34px  h=34px  pt=9 pb=9
+   *       _8_XoUG_action h=34px  w=34px  h=34px  pt=9 pb=9
+   *       Q51KRG_root    h=34px  w=34px
+   *         Q51KRG_trigger h=34px w=34px pt=9 pb=9
+   *
+   * 关键：按钮是**正方形定尺寸**，用的是 CSS 变量算出的 `width/height`，
+   * 我写 width/height 被更高优先级的规则挡住 —— 必须用 `min/max-width`
+   * 双写夹逼才压得动（单写 min 会被 width 撑开）。
+   * ======================================================================== */
+  /* 按钮尺寸：**本插件不再声明**。
+     ------------------------------------------------------------------------
+     尺寸与对齐由第 6 节（`[class*="xzv4MW_action"] { flex:0 0 auto; width:34px }`）
+     独家掌管，那条同时带着 `flex: 0 0 auto` 和父级 `justify-content: flex-end`，
+     两者必须配对才成立。
+     v11 曾试图再加一层夹逼，结果把配对关系打破 → **按钮组整体跑到左侧浮空**。
+     此处只保留容器高度归零，不碰任何尺寸/对齐属性。
+     ------------------------------------------------------------------------ */
+  [class*="TS9iAW_root"] {
+    min-height: 0 !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+  }
+
+  [class*="xzv4MW_actions"],
+  [class*="TS9iAW_actions"] {
+    min-height: 0 !important;
+    align-items: center !important;
+  }
+
+  /* ==========================================================================
+   * ---- v11-7 折叠头：33px / 40px → 24px / 28px ----
+   * --------------------------------------------------------------------------
+   * probe 实测：
+   *   System prompt  →  XrJvXW_root  h=40
+   *                       _row_luwio_16  h=40  minH=40px  pt=4 pb=4   ← minH 硬撑
+   *                         _leading   h=16
+   *                         _title_luwio  h=16  lh=15.6px
+   *
+   *   2 tool calls   →  l_V-RG_root  h=33
+   *                       l_V-RG_label  h=20  lh=20px
+   *                       chevron svg   h=16          ← 与 label 竖向叠加 = 33px
+   *
+   * 关键发现：l_V-RG_root 内部 label(20) 与 chevron(16) 是**上下堆叠**的，
+   * 加起来 33px。说明它是 flex-direction: column 且缺横向合并。
+   * 压 label 行高 + 让 root 走横向排列，可一次收到 24px。
+   * ======================================================================== */
+  [class*="XrJvXW_root"],
+  [class*="_root"][class*="luwio"] {
+    min-height: 0 !important;
+    height: auto !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+  }
+
+  [class*="_row_luwio"][class],
+  [data-dsh-mobile-center] [class*="_row_luwio"][class] {
+    min-height: 26px !important;
+    height: 26px !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+  }
+
+  [class*="_title_luwio"][class] {
+    line-height: 14px !important;
+    min-height: 0 !important;
+  }
+
+  /* 「N tool calls」折叠头：竖向堆叠改横向，33px → 24px */
+  [class*="l_V-RG_root"][class] {
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 4px !important;
+    min-height: 24px !important;
+    height: 24px !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+  }
+
+  [class*="l_V-RG_label"][class] {
+    line-height: 16px !important;
+    min-height: 0 !important;
+    height: auto !important;
+  }
+
+  /* ==========================================================================
+   * ---- v11-8 底部输入区：125px → ~110px ----
+   * --------------------------------------------------------------------------
+   * 审计数据（输入区内部，y 从 610 起）：
+   *   composerSeat  高 125  gap=2px
+   *     root        高 125  pb=4px
+   *       scroll    高  46  pt=4  pb=6     ← 文本输入区
+   *       row       高  42  pt=2  pb=6     ← 「+」按钮那一行
+   *       root      高  19  pt=3  mb=-6    ← 底部状态行
+   * ======================================================================== */
+  [data-dsh-mobile-center] [class*="composerStack"][class],
+  [data-dsh-mobile-center] [class*="composerSeat"][class],
+  [class*="composerStack"],
+  [class*="composerSeat"] {
+    gap: 0 !important;
+  }
+
+  /* 输入卡片：上下内边距各收 2px */
+  [class*="composerSeat"] [class*="card"],
+  [class*="composerStack"] [class*="card"] {
+    padding-top: 4px !important;
+    padding-bottom: 2px !important;
+    gap: 6px !important;
+  }
+
+  /* 文本输入区 */
+  [class*="composerStack"] [class*="scroll"] {
+    padding-top: 2px !important;
+    padding-bottom: 3px !important;
+  }
+
+  /* 「+」按钮行：42px → 36px */
+  [class*="composerStack"] [class*="row"][class],
+  [class*="composerStack"] [class*="_row"] {
+    padding-top: 0 !important;
+    padding-bottom: 2px !important;
+    gap: 4px 6px !important;
+    min-height: 0 !important;
+  }
+
+  /* 底部状态行（turns / tok/s / cache）：19px → 16px */
+  [class*="composerSeat"] [class*="root"][class],
+  [class*="composerStack"] [class*="root"][class] {
+    padding-top: 1px !important;
+    padding-bottom: 0 !important;
+    min-height: 0 !important;
+    line-height: 1 !important;
+  }
+
+  /* ---- v11-9 消息间距 4px → 2px ----
+     ⚠️ 实际赋值点在文件开头 :root/body 段（--dsh-chat-flow-gap: 2px），
+        此处不再重复声明，保持"全文件唯一声明点"原则。
+        本条只作为版本变更记录保留。 */
+
+  /* ==========================================================================
+   * 【v12-1】★ 零高占位块：真凶是 flex gap，不是 margin
+   * --------------------------------------------------------------------------
+   * 用户截图：「2 次工具调用」和下面正文之间空了一大块。
+   *
+   * 实测消息列（EvIC1a_column）：
+   *   display: flex;  flex-direction: column;  gap: 10px   ← 注意
+   *   [ 2] 高=24  | 2 tool calls
+   *   [ 3] 高= 0  | ← 零高块，仍吃 10px gap
+   *   [ 4] 高= 0  | ← 零高块，10px
+   *   [ 5] 高= 0  | ← 零高块，10px
+   *   [ 6] 高=354 | 回复正文（自身还带 mt:8px）
+   *
+   * 【判断更正 —— 第一次我猜错了】
+   *   起初以为是零高块"白吃 margin"，实测它们 margin 全是 0px。
+   *   真正给间距的是**父列容器的 flex `gap: 10px`**。
+   *
+   * 【一个反直觉事实】
+   *   flex `gap` 对**零高度子项照样生效** —— height:0 的 flex item
+   *   上下各产生 gap/2 的视觉空白。3 个零高块 = 30px 纯浪费。
+   *   （我一度以为 gap 会因零高而"折叠"，是错的。）
+   *
+   * 【为什么之前审计漏了】
+   *   审计脚本筛 `height > 30`，零高块被整体过滤 → 完全没进视野。
+   *   教训：**按高度筛元素会漏掉"零高但有副作用"的节点。**
+   *
+   * 【修法第二关：又是 dsh-mobile 的属性前缀】
+   *   第一版只写 `[class*="EvIC1a_column"]`（(0,1,0)），CDP 实测被压：
+   *     [data-dsh-mobile-message-column] { gap: 10px !important }   ← (0,1,0)
+   *   两条同为 (0,1,0) 且都在 @media 内 → **后写者胜**，我的 4px 白写。
+   *
+   *   这是**第 5 次**踩同一个坑（v7 -center、v8 -center、v9 -header、
+   *   v11 message-column、v12 又是 message-column）。
+   *   固定解法：加同前缀 + `[class]` 抬到 (0,2,0)，稳赢不依赖顺序。
+   * ======================================================================== */
+  [data-dsh-mobile-message-column] [class*="EvIC1a_column"][class],
+  [data-dsh-mobile-message-column] [class*="_column"][class],
+  [class*="EvIC1a_column"][class],
+  [class*="_column"][class] {
+    gap: 4px !important;
+  }
+
+  /* 块自身 margin 归零，避免 gap 之外再叠加 */
+  [class*="EvIC1a_column"] > [class*="EvIC1a_flowItem"],
+  [class*="_column"] > [class*="_flowItem"] {
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+  }
+
+  /* ==========================================================================
+   * 【v12-2】工具调用块 → 回复正文：额外缓冲归零
+   * --------------------------------------------------------------------------
+   * 正文块自身带 `mt: 8px`（v4 时代留下的"回答内部段落间距"）。
+   * 在父列 gap 已统一给 4px 的前提下，这 8px 是重复计算 —— 去掉。
+   * ======================================================================== */
+  [class*="_flowItem"][data-turn-process-answer],
+  [class*="_flowItem"]:has([class*="hWmORq_root"]) {
+    margin-top: 0 !important;
+  }
+
+  /* ==========================================================================
+   * 【v13-B】底部操作栏：时间戳归位，不再独占一行   ★ 用户：「时间还是另外占用了一行」
+   * --------------------------------------------------------------------------
+   * 【上一轮的错误结论，此处更正】
+   * v12-3 曾写「36px 里按钮占 34px，本质是操作栏+时间戳，不是纯时间戳行」——
+   * 这个说法**不完整**，漏掉了最关键的一点：内部其实**折成了 3 行**。
+   *
+   * 实测 actions 容器内部子项 y 坐标：
+   *   xzv4MW_actions   w=327px  display:flex  flex-wrap:**wrap**  justify:flex-end
+   *     ├─ 按钮 ×6   34×34  y=576   ← 第 1 行
+   *     ├─ Q51KRG    34×34  y=576   ← 第 1 行
+   *     └─ timeEnd   28×11  y=588   ← 第 3 行  ★ 被 flex 折行挤下来的
+   *   实际行数 = 3
+   *
+   * 即：6 个 34px 按钮(204px) + 间距(30px) + 时间戳(28px) 在 327px 里装不下，
+   * `flex-wrap: wrap` 把时间戳挤到了独立的一行 —— 这才是「时间占一行」的真因。
+   *
+   * 另外 root 的 `gap:16px` 也无意义（它只有 1 个真实子元素，gap 不生效但冗余）。
+   *
+   * 【方案 B：只让时间戳归位，不碰按钮尺寸】
+   * 用户选择 B —— 保按钮 34px 触摸区不动，只消除折行：
+   *   1. actions 改 nowrap           → 时间戳不再被挤下去
+   *   2. 时间戳 order:-1             → 移到最左
+   *   3. 时间戳 margin-right:auto    → 撑开中间，按钮自然靠右
+   *   4. root gap 归零               → 清掉冗余
+   *
+   * 实测（381×741）：
+   *   改前  root高 36px / 实际行数 3 / 时间戳 x=315 独占行
+   *   改后  root高 36px / 实际行数 1 / 时间戳 x=16  与按钮同行靠左
+   *   按钮尺寸 34px **未变**，最右位置 349px（仍靠右），无浮空。
+   *
+   * ⚠️ 与 v11 那次「按钮跑到左侧浮空」的区别：
+   *   v11 是给按钮加 `flex: 0 0 28px`，动了 flex 基准 → 破坏与父容器
+   *   `justify-content: flex-end` 的配对。
+   *   本方案**不碰任何 flex 属性到按钮上**，只用 nowrap + order + margin-right:auto
+   *   制造左右分区，因此不会破坏对齐契约。
+   * ======================================================================== */
+  /* --------------------------------------------------------------------------
+   * ⚠️ 声明分工（避免"自己打自己"，本文件已复发 5 次的老坑）：
+   *   · root 的 gap / margin / padding   → 本段（唯一声明点）
+   *   · actions 的 flex-wrap: nowrap     → 本段（唯一声明点）
+   *   · 时间戳的 order / flex / margin   → 第 6 节（唯一声明点，含 order:-1）
+   *     （第 6 节那条是 (0,3,0)，优先级更高，此处不得重复声明时间戳属性）
+   * ------------------------------------------------------------------------ */
+  [class*="TS9iAW_root"],
+  [class*="xzv4MW_root"] {
+    margin-top: 0 !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    gap: 0 !important;
+  }
+
+  /* 关键：禁止折行，时间戳才不会被挤到下一行 */
+  [class*="xzv4MW_actions"],
+  [class*="TS9iAW_actions"] {
+    flex-wrap: nowrap !important;
+  }
+
+  /* ==========================================================================
+   * 【v10-1】块间距压缩：16px → 6px     ★ 用户抱怨「行间距怎么这么大」的真凶
+   * --------------------------------------------------------------------------
+   * 之前 v4~v9 一直在压 `--dsh-chat-flow-gap`（消息与消息之间），
+   * 但**消息块内部**的 markdown 段落间距从来没碰过，一直是 dsh 原生 16px。
+   *
+   * 实测（381×741，一段「系统状态摘要」）：
+   *   段落只有 22px 高，前后各留 16px margin → 间隙占行高 73%
+   *   11 个兄弟块全部 16px：
+   *     p/当前系统状态摘要 → p/运行时长        16px
+   *     p/运行时长         → ul/已运行约 2 小时  16px
+   *     ul/已运行约 2 小时  → p/磁盘            16px
+   *     ... 共 11 处，无一例外
+   *
+   * 注意原生用的是**长手 margin-top / margin-bottom 各 16px**，
+   * 相邻两块会**折叠**（margin collapse）成 16px 而非 32px，
+   * 所以这里要同时改 mt 和 mb，否则折叠结果会取较大者，白改。
+   *
+   * 为什么用「直接子元素 > 」：避免误伤列表项内部嵌套的 p/ul
+   * （嵌套层级的间距另有下面 ul/ol 的规则管）。
+   * ======================================================================== */
+  /* 【v11 变更】此处原为 v10 的间距声明（块 6px / 标题 10-4 / 列表 18 /
+     代码块 6 / 分割线 8），已被上方 v11 段全面取代，故整体删除。
+     ⚠️ 若保留会与 v11 冲突 —— 两条选择器相同、优先级相同、同在 @media 内，
+        后写者胜 → v11 白改（本轮已实际踩到，块间距停在 6px）。
+     间距类属性本文件唯一声明点 = v11 段。 */
+
+  /* ==========================================================================
+   * 【v10-2】行高再收紧：22px → 18px（行高比 1.83 → 1.5）
+   * --------------------------------------------------------------------------
+   * v9 按用户"减少 2px"的要求把 24 改成 22，但对 12px 字号来说
+   * 1.83 的比值仍偏松（中文正文舒适区 1.4~1.6）。
+   * 用户这次明确提出"行间距怎么这么大"，所以按舒适区上限取 1.5 → 18px。
+   *
+   * 正文/气泡/输入框的行高已在文件开头统一声明，这里只补标题与代码块，
+   * 不重复写 —— 同文件重复声明同优先级规则会互相覆盖，已踩过两次。
+   * ======================================================================== */
+
+  /* 标题行高跟着缩，避免大标题撑高 */
+  [class*="_markdown_"] h1 { line-height: 24px !important; }
+  [class*="_markdown_"] h2 { line-height: 22px !important; }
+  [class*="_markdown_"] h3 { line-height: 20px !important; }
+  [class*="_markdown_"] h4,
+  [class*="_markdown_"] h5,
+  [class*="_markdown_"] h6 { line-height: 18px !important; }
+
+  /* 代码块行高 19px → 17px */
+  [class*="md-code-block"] pre,
+  [class*="_markdown_"] pre,
+  [class*="_markdown_"] pre code {
+    line-height: 17px !important;
+  }
+
+  /* 【v11 变更】v10-3 的 --dsh-chat-flow-gap: 4px 已被 v11-9 的 2px 取代，
+     此处删除。flow-gap 本文件唯一声明点 = 文件开头 :root/body 段（v11）。
+
+  /* ==========================================================================
+   * 【v9-3】顶部导航栏压缩：76px → 约 56px
+   * --------------------------------------------------------------------------
+   * 实测顶栏构成（381×741）：
+   *   wSkVaW_header     h=76  min-height:76px  padding: 4px 8px 0 42px   ← 元凶是 min-height
+   *     titleRow        h=32  min-height:32px
+   *     tabs            h=28  min-height:28px  padding: 0 6px 5px
+   *
+   * 【v9 第一版失败，又是 v7 那个坑】
+   * 只写 `[class*="wSkVaW_titleRow"]` / `[class*="wSkVaW_tabs"]` 只有 (0,1,0)，
+   * 被 dsh-mobile 这两条 (0,2,0) 压住（CDP getMatchedStylesForNode 实测）：
+   *
+   *   [data-dsh-mobile-header] [class*="_titleRow"] {
+   *     min-height: 32px !important; height: 32px !important; padding: 0 6px !important;
+   *   }
+   *   [data-dsh-mobile-header] [class*="_tabs"] {
+   *     min-height: 28px !important; height: 28px !important; padding: 0 6px !important;
+   *   }
+   *
+   * 结果顶栏只从 76 掉到 65px（header 自己的 min-height 生效了，但两行子元素没压）。
+   *
+   * 【修法】加同样的 [data-dsh-mobile-header] 前缀达到 (0,2,0)，
+   * 再靠「非 @media 胜 @media」的反向经验 —— 这里对手也在 @media 内，
+   * 所以直接再加 [class] 抬到 (0,3,0)，彻底稳赢，不依赖顺序。
+   * ======================================================================== */
+  [class*="wSkVaW_header"] {
+    min-height: 56px !important;
+    height: auto !important;
+    padding-top: 2px !important;
+    padding-bottom: 0 !important;
+  }
+
+  [data-dsh-mobile-header] [class*="wSkVaW_titleRow"][class],
+  [data-dsh-mobile-header] [class*="_titleRow"][class],
+  [class*="wSkVaW_titleRow"] {
+    min-height: 26px !important;
+    height: 26px !important;
+  }
+
+  [data-dsh-mobile-header] [class*="wSkVaW_tabs"][class],
+  [data-dsh-mobile-header] [class*="_tabs"][class],
+  [class*="wSkVaW_tabs"] {
+    min-height: 24px !important;
+    height: 24px !important;
+    padding-bottom: 2px !important;
+  }
+
+  [data-dsh-mobile-header] [class*="wSkVaW_tab"][class],
+  [data-dsh-mobile-header] [class*="_tab"][class] {
+    padding-bottom: 3px !important;
+  }
+
+  [class*="wSkVaW_titleCluster"],
+  [class*="wSkVaW_crumbs"],
+  [class*="wSkVaW_headerUtilities"],
+  [class*="wSkVaW_headerCorner"] {
+    min-height: 24px !important;
+    height: 24px !important;
+  }
+
+
+  /* 回答内部的段落间距跟随全局 flow-gap（v11 = 2px）。
+     ⚠️ 此前写死 4px 会覆盖 :root 的全局值 —— 已删除，统一由变量控制。 */
+
+  /* ==========================================================================
+   * 1. 兜底：万一变量在某个分支未被采用，再用 margin 压一次
+   * --------------------------------------------------------------------------
+   * 注意这里【不用】:first-child，因为原生用 `~` 兄弟选择器链，
+   * 首个子元素本来就没有 margin-top；加了 :first-child 反而会误伤
+   * 用户消息块（它下面紧跟操作行）。
+   * ======================================================================== */
+  [class*="_column"] > [class*="_flowItem"] {
+    margin-bottom: 0 !important;
+  }
+
+  /* ==========================================================================
+   * 2. 折叠头（System prompt / 上下文注入 / 工具调用）
+   * --------------------------------------------------------------------------
+   * 实测问题：容器高度为 0，内容却溢出了 56px —— 塌陷。
+   * 用户截图里「2 次工具调用」上下的大片空白就是这个。
+   * ======================================================================== */
+  [class*="_flowItem"]:has([class*="_title_"]) {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+  }
+
+  [class*="_row_luwio"] {
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    align-items: center !important;
+    min-height: 0 !important;
+    height: auto !important;
+  }
+
+  /* 折叠头整块：收起多余上下留白
+     （min-height / height 由 v11-7 段独家掌管，此处只管 margin） */
+  [class*="XrJvXW_root"] {
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+  }
+
+  /* ⚠️ 行高已移交 v11-7 段（14px），此处不再写 line-height。
+     此前写 1.3 会覆盖 v11-7 的显式值（同优先级后写者胜）。 */
+  [class*="_title_luwio"] {
+    font-size: 12px !important;
+    opacity: 0.75 !important;
+  }
+
+  /* 折叠头左侧细竖线，语义上标记为「元信息」而非对话内容 */
+  [class*="_flowItem"]:has([class*="_title_"]) > [class*="XrJvXW_root"] {
+    border-left: 2px solid currentColor;
+    border-left-color: color-mix(in srgb, currentColor 14%, transparent);
+    padding-left: 10px !important;
+  }
+
+  [class*="XrJvXW_source"] {
+    font-size: 11px !important;
+    max-width: 40vw !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+  }
+
+  /* ==========================================================================
+   * 3.【v7 核心修复】用户消息：把时间戳/操作行压回气泡同一行
+   * --------------------------------------------------------------------------
+   * 实测账本（381×741 真机视口）：
+   *
+   *   Sixlwa_userRow  h=134px  flex-direction: column  gap:0
+   *   ├─ Sixlwa_userStack (气泡)  58px
+   *   └─ xzv4MW_actions           74px   ← 90px 空隙的真正来源
+   *        ├─ padding-top    9px
+   *        ├─ padding-bottom 9px
+   *        ├─ SPAN.xzv4MW_timeStart  20px  flex:"1 1 100%" order:2 w=309px
+   *        ├─ row-gap 2px（换行产生）
+   *        └─ BUTTON.xzv4MW_action   34px  ← 被 wrap 挤到了第二行
+   *
+   * 【谁写的这些值】—— 是 dsh-mobile 插件，不是 dsh 原生：
+   *   [data-dsh-mobile-center] [class*="_timeStart"] { flex:1 1 100%!important;
+   *                                                     order:2!important; }
+   *   [data-dsh-mobile-center] [class*="_actions"]:has(> [class*="_timeStart"])
+   *                                       { flex-wrap:wrap!important; min-height:28px!important; }
+   * 优先级 (0,2,0) / (0,2,1) —— 比我的 (0,1,0) 高一档，!important 也压不过。
+   *
+   * 【v7 做法】加上同样的 [data-dsh-mobile-center] 前缀把优先级提到同一档，
+   *   再靠「加载顺序靠后」取胜；末尾追加 [class] 再提一档保险。
+   * ======================================================================== */
+  [class*="_userStack"] {
+    gap: 0 !important;
+  }
+
+  /* 用户消息容器：纵向堆叠（气泡在上、操作行紧贴其下） */
+  [class*="Sixlwa_userRow"] {
+    gap: 0 !important;
+    align-items: flex-end !important;
+  }
+
+  /* 操作行：禁止换行 + 清 padding + 去掉 min-height。
+     ⚠️ 选择器必须带 [data-dsh-mobile-center] 才能压过 dsh-mobile。 */
+  [data-dsh-mobile-center] [class*="_actions"]:has(> [class*="_timeStart"]),
+  [data-dsh-mobile-center] [class*="_actions"]:has(> [class*="_timeEnd"]),
+  [class*="xzv4MW_actions"],
+  [class*="TS9iAW_actions"] {
+    display: flex !important;
+    flex-direction: row !important;
+    flex-flow: row nowrap !important;
+    flex-wrap: nowrap !important;        /* ① 禁止换行 —— 关键 */
+    align-items: center !important;
+    justify-content: flex-end !important;
+    gap: 6px !important;
+    margin-top: 2px !important;
+    min-height: 0 !important;            /* 原生 min-height:28px */
+    height: auto !important;
+    width: auto !important;              /* dsh-mobile 设过 width:100% */
+    padding: 0 !important;               /* ③ 清掉 9px 上下 padding */
+  }
+
+  /* 时间戳：必须同时覆盖 flex 简写、flex-basis、order。
+     ⚠️ 同样必须带 [data-dsh-mobile-center]，且用 [class] 再提一档
+        —— 目标优先级 (0,3,0)，高于 dsh-mobile 的 (0,2,0)。
+     【v13-B】order 由 0 改为 -1：让时间戳排到按钮组**最左**，
+        配合父容器的 `justify-content: flex-end`，
+        视觉上形成「[时间戳] ...... [按钮组]」的左右分区。
+        （去掉折行是前提，见下方 v13-B 段的 nowrap） */
+  [data-dsh-mobile-center] [class*="_timeStart"][class],
+  [data-dsh-mobile-center] [class*="_timeEnd"][class],
+  [data-dsh-mobile-center] [class*="_timeStart"],
+  [data-dsh-mobile-center] [class*="_timeEnd"],
+  [class*="timeStart"],
+  [class*="timeEnd"] {
+    flex: 0 0 auto !important;
+    flex-grow: 0 !important;
+    flex-shrink: 0 !important;
+    flex-basis: auto !important;
+    order: -1 !important;                /* ② v13-B：归位到按钮组最左 */
+    margin-left: 0 !important;           /* v13-B：清掉可能的左偏移 */
+    margin-right: auto !important;       /* v13-B：撑开中间，制造左右分区 */
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    padding: 0 !important;
+    font-size: 11px !important;
+    line-height: 1 !important;
+    opacity: 0.5 !important;
+    align-self: center !important;
+    display: inline-block !important;
+  }
+
+  /* 用户气泡：只留圆角。
+     ⚠️ padding 由 v11 段独家掌管（5px 12px），此处曾写死 8px 14px
+        把 v11 的值覆盖掉 —— 同优先级后者胜，属于"自己打自己"。
+        行高同样只在文件开头声明。本文件对 _bubble 的声明分工：
+          · line-height / font-size → 文件开头 v9/v11 段
+          · padding                 → v11-5 段
+          · border-radius / max-width → 本段
+     */
+  [class*="_bubble"] {
+    border-radius: 18px !important;
+  }
+
+  [class*="_userStack"] [class*="_bubble"] {
+    max-width: 78vw !important;
+  }
+
+  /* ==========================================================================
+   * 4. 模型回复：左侧竖线标识 + 提升正文行高
+   * ======================================================================== */
+  [class*="hWmORq_root"] {
+    border-left: 2px solid color-mix(in srgb, currentColor 18%, transparent);
+    padding-left: 10px !important;
+    margin-left: 0 !important;
+  }
+
+  /* 【v10 更正】v9 时这里写死 22px，与文件开头 v10 的 18px 冲突。
+     两条同为 (0,1,0) 且都在 @media 内 → **后写者胜**，结果开头那条白写，
+     实测 hWmORq_body 行高仍是 22px。现统一为 18px。
+     （这类"同文件自己打自己"已经踩过两次：v9 的 _bubble line-height:1.5、
+       v9 的 hWmORq 22px —— 教训：行高只在开头一处定义，别在文件后段重复。） */
+  [class*="hWmORq_body"] {
+    line-height: 18px !important;
+  }
+
+  [class*="_markdown_"] > p:first-child { margin-top: 0 !important; }
+  [class*="_markdown_"] > p:last-child  { margin-bottom: 0 !important; }
+
+  /* ==========================================================================
+   * 5. 「Thought for a while」：去掉双重下边距
+   * ======================================================================== */
+  [class*="l_V-RG_root"] {
+    padding-bottom: 2px !important;
+    margin-bottom: 0 !important;
+    opacity: 0.85 !important;
+  }
+
+  [class*="l_V-RG_label"] {
+    font-size: 13px !important;
+  }
+
+  /* ==========================================================================
+   * 6. 回复操作栏：压缩 + 弱化统计
+   * ======================================================================== */
+  [class*="xzv4MW_action"],
+  [class*="_8_XoUG_action"],
+  [class*="Q51KRG_trigger"] {
+    flex: 0 0 auto !important;
+    width: 34px !important;
+    height: 34px !important;
+    padding: 9px !important;
+    border-radius: 17px !important;
+    opacity: 0.75 !important;
+  }
+
+  [class*="xzv4MW_action"]:active,
+  [class*="_8_XoUG_action"]:active {
+    opacity: 1 !important;
+    background: color-mix(in srgb, currentColor 10%, transparent) !important;
+  }
+
+  /* 统计按钮（Usage / Ran for）比操作按钮更弱 */
+  [class*="Q51KRG_trigger"] {
+    opacity: 0.55 !important;
+  }
+
+  /* ==========================================================================
+   * 7. 滚动容器：收紧上下留白，把空间还给对话
+   * --------------------------------------------------------------------------
+   * 原生 padding: 16px calc(var(--dsh-composer-side-clearance) + 16px)
+   * 移动端左右各 16px 在 381px 视口下浪费明显，横向压到 12px。
+   * ======================================================================== */
+  [class*="_scroll"] {
+    padding-top: 4px !important;
+    padding-bottom: 6px !important;
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+  }
+
+  /* ==========================================================================
+   * 8. 底部安全区
+   * ======================================================================== */
+  [class*="_column"] {
+    padding-bottom: 0 !important;
+  }
+
+  /* ==========================================================================
+   * 9. 代码块：恢复横向滚动，禁止把标识符切断
+   * --------------------------------------------------------------------------
+   * 实测原生（pre._plain_rsn9u_103）：
+   *     word-break: break-all
+   *     overflow-wrap: anywhere
+   *     white-space: pre-wrap
+   *     font-size: 11px
+   *     padding: 16px
+   * 后果：`list[int]` 被切成 `list[in` + `t]`，`pivot` 被切成 `pivo` + `t`
+   *       —— 每行硬折，代码几乎不可读。
+   *
+   * 原生的用意是「不想出现横向滚动」，但在 381px 视口下这个妥协代价太大。
+   * 改为标准做法：white-space: pre（只按 \n 换行）+ 容器 overflow-x: auto
+   *       —— 长行改为可横向滑动，标识符保持完整。
+   * 同时字号 11px → 12.5px，padding 16px → 12px（窄屏下更合理）。
+   * ======================================================================== */
+  [class*="md-code-block"] pre,
+  [class*="md-code-block"] code,
+  [class*="_markdown_"] pre,
+  [class*="_markdown_"] pre code {
+    white-space: pre !important;
+    word-break: normal !important;
+    overflow-wrap: normal !important;
+    font-size: 12.5px !important;
+    line-height: 1.55 !important;
+    -webkit-overflow-scrolling: touch !important;
+  }
+
+  /* 代码块外容器：开启横向滚动，并给出视觉提示 */
+  [class*="md-code-block"] {
+    overflow-x: auto !important;
+    max-width: 100% !important;
+    border-radius: 10px !important;
+  }
+
+  [class*="md-code-block"] pre {
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    padding: 12px !important;
+    border-radius: 10px !important;
+  }
+
+  /* 行内 code：不要被 break-all 影响 */
+  [class*="_markdown_"] :not(pre) > code {
+    word-break: normal !important;
+    overflow-wrap: break-word !important;
+    font-size: 0.92em !important;
+    padding: 1px 5px !important;
+    border-radius: 4px !important;
+  }
+
+  /* 代码块顶部的语言标签 / Copy 按钮：收紧，回收纵向空间 */
+  [class*="_header_rsn9u"],
+  [class*="md-code-block"] > div:first-child {
+    font-size: 11px !important;
+    padding-top: 2px !important;
+    padding-bottom: 2px !important;
+    opacity: 0.75 !important;
+  }
+
+  /* ==========================================================================
+   * 10. 表格：包一层横向滚动，避免被截断
+   * --------------------------------------------------------------------------
+   * 实测：TABLE 宽 389px > 视口 381px，外层无滚动容器 → 直接截断。
+   * 这里没法给父级动态加 wrapper，只能让 markdown 容器承担滚动。
+   * ======================================================================== */
+  [class*="_markdown_"] table {
+    display: block !important;
+    overflow-x: auto !important;
+    max-width: 100% !important;
+    -webkit-overflow-scrolling: touch !important;
+    font-size: 13px !important;
+  }
+
+  [class*="_markdown_"] {
+    overflow-x: hidden !important;
+  }
+
+  /* ==========================================================================
+   * 11. 输入区：收紧底部占用
+   * --------------------------------------------------------------------------
+   * v8 起统一由下方「13. composer 纵深压缩」接管（那条带
+   * [data-dsh-mobile-center] 前缀才能压过 dsh-mobile）。此处保留说明，
+   * 不再重复出规则，避免两条同族规则互相干扰。
+   * ======================================================================== */
+
+  /* ==========================================================================
+   * 13. 【v8 #1】底部 composer 纵深压缩 —— 真机「太空旷」的主体
+   * --------------------------------------------------------------------------
+   * 实测（381×741）：
+   *   wSkVaW_composerSeat   y=592  h=143   ← 占视口 19.3%
+   *     composerSeat        padding: 0 8px 8px
+   *     wSkVaW_composerStack y=592 h=133  padding: 0 8px 8px   gap: 6px
+   *
+   * 【踩坑记录 —— 和 v7 一模一样的坑，又踩了一次】
+   * 第一次只写 `[class*="composerStack"] { padding: 0 0 2px 0 !important }`，
+   * 结果 gap 生效了、padding 纹丝不动。用 CDP 的
+   * `CSS.getMatchedStylesForNode` 才看清真正的赢家：
+   *
+   *   [data-dsh-mobile-center] [class*="_composer"] {
+   *     padding-left: 8px !important;
+   *     padding-right: 8px !important;
+   *     padding-bottom: max(8px, env(safe-area-inset-bottom)) !important;
+   *   }                                    ← 优先级 (0,2,0)，来自 dsh-mobile
+   *
+   * 我的 (0,1,0) 低一档，!important 救不了（只在同优先级内比大小）。
+   *
+   * 【修法 —— 第三版才成功，完整排错过程如下】
+   *
+   * 第 1 版：`[class*="composerStack"] { padding: 0 0 2px 0 !important }`
+   *          → gap 生效、padding 不生效。优先级 (0,1,0) 输给上面的 (0,2,0)。
+   *
+   * 第 2 版：加 `[data-dsh-mobile-center]` 前缀，达到 (0,2,0)。
+   *          CDP 的 getMatchedStylesForNode 显示我的规则**排在最后**，
+   *          看上去赢了 —— 但实测 padding 仍是 8px、
+   *          clientHeight===offsetHeight===133，说明根本没生效。
+   *          原因：我这条在 **@media 内**，对手
+   *          `[data-dsh-mobile-center] [class*="_composer"]` **不在 @media 内**。
+   *          两条同优先级且都 !important 时，**非 media 的那条胜**。
+   *          （CDP 只告诉你"匹配了"，不告诉你"最终谁赢"，这是它的局限。）
+   *
+   * 第 3 版（本版）：再加一个属性选择器 `[class]`，把优先级抬到 (0,3,0)，
+   *          跨过这一档 —— 不再依赖 media / 源码顺序这类脆弱条件：
+   *            [data-dsh-mobile-center] [class*="composerStack"][class]
+   *                                                         ↑ +1 档
+   * ======================================================================== */
+  [data-dsh-mobile-center] [class*="composerStack"][class],
+  [data-dsh-mobile-center] [class*="composerSeat"][class],
+  [data-dsh-mobile-center] [class*="_composer"][class] {
+    padding-top: 0 !important;
+    padding-right: 4px !important;
+    padding-bottom: 0 !important;
+    padding-left: 4px !important;
+    gap: 2px !important;
+  }
+
+  /* 输入框本体：别让它自己撑出额外高度 */
+  [class*="composerStack"] textarea,
+  [class*="composerStack"] [class*="editor"] {
+    min-height: 24px !important;
+    max-height: 40vh !important;
+  }
+
+  /* ==========================================================================
+   * 14. 【v8 #2 修正版】底部统计文字不再被截断
+   * --------------------------------------------------------------------------
+   * 第一次尝试（去掉 label 的 overflow:hidden / ellipsis）**不解决问题**：
+   * 实测 overflow 确实变成了 visible、text-overflow 变成 clip，
+   *   但 label 宽依然是 99 / 内容 116 → 文字被**静默裁掉**，比省略号更糟。
+   *
+   * 真正的原因不在 label 自己，而在**容器的可用宽度不够**：
+   *   bOPqQW_root    w=283
+   *   bOPqQW_anchor  w=129 + w=134
+   *   bOPqQW_root    gap: 12px
+   *   → 两个 pill 共需 263 + 12 = 275，看着够；
+   *     但 pill 内部还要放 内容 116 + 123 和各自的 icon/sep，
+   *     真实需求约 323px > 283px → 溢出 40px。
+   *
+   * label 是 `flex: 0 1 auto`（允许收缩），一收缩就把字裁了。
+   *
+   * 修法：让 label **拒绝收缩**（flex: 0 0 auto），并把 flex 行改为
+   * `flex-wrap: nowrap` + 容器允许横向溢出一点点；同时压缩 gap 与 sep
+   * 把需求从 323px 降下来。
+   *
+   * 关键点：只改"谁可以被压缩"，不改容器宽度 —— 改宽度会顶掉输入区布局。
+   * ======================================================================== */
+  [class*="bOPqQW_label"] {
+    flex: 0 0 auto !important;      /* 拒绝收缩 —— 这是本次真正生效的一条 */
+    min-width: max-content !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    white-space: nowrap !important;
+    line-height: 1 !important;
+  }
+
+  [class*="bOPqQW_pill"] {
+    gap: 3px !important;
+    flex: 0 0 auto !important;
+    min-width: max-content !important;
+  }
+
+  [class*="bOPqQW_anchor"] {
+    flex: 0 0 auto !important;
+    min-width: max-content !important;
+    max-width: none !important;
+  }
+
+  /* 容器：压缩间距，并把 gap 从 12px 收到 8px（省 4px） */
+  [class*="bOPqQW_root"] {
+    gap: 8px !important;
+    flex-wrap: nowrap !important;
+    overflow: visible !important;
+    max-width: none !important;
+  }
+
+  [class*="bOPqQW_sep"] {
+    margin-left: -2px !important;
+    margin-right: -2px !important;
+  }
+
+}
+
+/* ============================================================================
+ * 12. 跨端：修复折叠项容器高度塌陷（桌面端同样存在的布局 bug）
+ *     不放在 @media 内 —— 这是原生缺陷，与视口宽度无关。
+ * ========================================================================== */
+[class*="_flowItem"]:has([class*="_title_"]) {
+  height: auto !important;
+  min-height: 0 !important;
+  overflow: visible !important;
+}

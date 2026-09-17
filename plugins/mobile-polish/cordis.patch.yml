@@ -1,0 +1,28 @@
+# Community bundle for the stock DSH Web profile.
+#
+# 本层做两件事：
+#   1. 向页面 <head> 注入一段移动端排版优化样式
+#   2. 补一个原生缺失的事件绑定：点会话行后收回侧栏
+# 它不修改 DSH 任何源码文件，也不改变前端构建产物。
+#
+# ── 回滚方式（任选其一，均需重启服务）────────────────────────────────
+#   1. 把下方 enabled 改成 false（全关）
+#   2. 设环境变量 DSH_MOBILE_POLISH=0（优先级最高，全关）
+#   3. 只关抽屉补丁：closeDrawerOnSessionPick 改 false，
+#      或设 DSH_MOBILE_POLISH_DRAWER=0（样式优化不受影响）
+#   4. 从 profile 的 package.json → dsh.profile.bundles 摘掉 dsh-mobile-polish
+#   5. 删除 node_modules/dsh-mobile-polish 目录
+# 任一层生效后，页面即回到 dsh 原生样式与原生行为。
+# ────────────────────────────────────────────────────────────────────
+- insert:
+    - id: mobile-polish
+      name: dsh-mobile-polish
+      config:
+        # 总开关。true = 启用移动端排版优化。
+        enabled: true
+        # 生效断点（px）。仅在此宽度及以下应用，桌面端不受影响。
+        maxWidth: 720
+        # 【v8】点会话行后自动收回侧栏。可单独关闭而不影响样式优化。
+        closeDrawerOnSessionPick: true
+        # 打印注入日志，排查用。
+        verbose: false

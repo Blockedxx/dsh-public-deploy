@@ -1,0 +1,15 @@
+# 运行时产物：每个环境生成的公网域名不同，不入库
+.known-hosts.json
+
+# 访问地址（含 token，绝不入库）
+dsh-公网访问地址.txt
+access-url.txt
+
+# 依赖与日志
+node_modules/
+*.log
+*.out
+
+# 系统文件
+.DS_Store
+Thumbs.db
