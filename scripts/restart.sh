@@ -71,6 +71,31 @@ else
   echo "    ⚠️  未找到 $PLUGIN_SRC，跳过（Settings 在公网域名下将不可用）"
 fi
 
+# ── 同步 mobile-polish（仅在已部署时）────────────────────────────────────
+# ⚠️ 实测踩坑：polish.sh 用通配符同步 lib/*.mjs 与 lib/*.css，逻辑本身正确；
+#    但 restart.sh 原先**只同步 local-loopback-trust**，不同步 mobile-polish。
+#    结果：新增源文件（如 drawer-autoclose.mjs）之后若只跑 restart.sh，
+#    profile 里的旧副本会一直缺该文件，而 index.mjs 在 import 阶段就抛
+#    ERR_MODULE_NOT_FOUND，dsh 直接退出 code=1 —— 表现为「服务起不来」。
+#    典型触发场景：沙箱重启后服务全停，此时跑 restart.sh 无法自愈。
+# 因此这里补齐：只要 profile 里已部署该插件，就顺手全量同步一次（幂等）。
+POLISH_SRC="${SCRIPT_DIR}/../plugins/mobile-polish"
+POLISH_DST="$PROFILE/node_modules/dsh-mobile-polish"
+if [ -d "$POLISH_SRC" ] && [ -d "$POLISH_DST" ]; then
+  mkdir -p "$POLISH_DST/lib"
+  cp -f "${POLISH_SRC}/package.json"       "${POLISH_DST}/package.json"       2>/dev/null || true
+  cp -f "${POLISH_SRC}/cordis.patch.yml"   "${POLISH_DST}/cordis.patch.yml"   2>/dev/null || true
+  [ -f "${POLISH_SRC}/README.md" ] && cp -f "${POLISH_SRC}/README.md" "${POLISH_DST}/README.md"
+  for f in "${POLISH_SRC}"/lib/*.mjs "${POLISH_SRC}"/lib/*.css; do
+    [ -e "$f" ] || continue
+    cp -f "$f" "${POLISH_DST}/lib/$(basename "$f")"
+  done
+  echo "==> 同步 mobile-polish 插件文件"
+  ls -1 "$POLISH_DST/lib" | sed 's/^/    · /'
+elif [ -d "$POLISH_SRC" ] && [ ! -d "$POLISH_DST" ]; then
+  echo "==> mobile-polish 未部署（如需启用：./scripts/polish.sh on）"
+fi
+
 echo "==> 停止现有服务"
 for port in "$PUBLIC_PORT" "$DSH_PORT"; do
   pids="$(ss -lntp 2>/dev/null | grep ":${port} " | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u || true)"
