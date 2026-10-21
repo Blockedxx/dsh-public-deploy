@@ -736,7 +736,7 @@ error: --host 0.0.0.0 is intentionally not supported yet for safety:
 
 | 指标 | 原生 | 优化后 | 说明 |
 |---|---|---|---|
-| 正文字号 / 行高 | 14px / 24px | **12px / 18px** | 手机上更易读 |
+| 正文字号 / 行高 | 14px / 24px | **14px / 21px** | 字号保持原生，仅收紧行高；标题按比例上调 |
 | 消息列 gap | 10px | **4px** | |
 | 段落块间距 | 16px | **3px** | 最大的「空旷感」来源 |
 | 标题间距 | 32 / 16px | **11 / 5px** | |
@@ -1156,7 +1156,7 @@ POST http://codebuddy.auth-proxy.local/v2/agentos/artifact-releases
 | 元素 | 升级后实测 | 说明 |
 |---|---|---|
 | `_column` 的 `row-gap` | **4px** | ✅ 我们的压缩仍生效（原生 10px） |
-| `_bubble` 字号 / 行高 | **12px / 15px** | ✅ 生效 |
+| `_bubble` 字号 / 行高 | **14px / 18px** | ✅ 生效 |
 | `flowItem` margin/padding | **0 / 0** | ✅ 生效 |
 | 横向溢出 | **无** | ✅ |
 | `console.error` | **0** | ✅ |
@@ -1179,10 +1179,10 @@ POST http://codebuddy.auth-proxy.local/v2/agentos/artifact-releases
 
 **这是官方有意为之**——iOS Safari 在输入框字号 < 16px 时，
 聚焦会自动放大整个页面，体验更差。所以本地这条规则保持被覆盖即可，
-不要为了「统一 12px」去硬覆盖它。
+不要为了「统一 14px」去硬覆盖它。
 
 同理，`--dsh-content-font-size` 变量在 0.2.x 下也不再被我们的 `body` 覆盖生效，
-但正文有直接的 `font-size: 12px !important`，所以显示效果不受影响。
+但正文有直接的 `font-size: 14px !important`，所以显示效果不受影响。
 
 **已知不兼容**：平台注入的 `@wxg-prc-cpg/browser-skill-dsh-plugin@0.3.0`
 仍要求 `^0.1.x`，在 0.2.1 下被跳过。这是平台侧插件，不影响 dsh 本体与移动端。

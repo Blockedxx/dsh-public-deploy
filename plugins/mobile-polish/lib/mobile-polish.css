@@ -102,7 +102,7 @@
    * ======================================================================== */
   :root,
   body {
-    --dsh-content-font-size: 12px;
+    --dsh-content-font-size: 14px;
     --dsh-content-font-delta: calc(12px - 14px);
     --dsh-chat-flow-gap: 2px;   /* v11 起 = 2px（唯一声明点，勿在别处再写） */
   }
@@ -114,22 +114,22 @@
   [class*="_markdown_"] td,
   [class*="_markdown_"] th,
   [class*="hWmORq_body"] {
-    font-size: 12px !important;
-    line-height: 18px !important;
+    font-size: 14px !important;
+    line-height: 21px !important;
   }
 
   /* 回复根节点行高同步 */
   [class*="hWmORq_root"] {
-    line-height: 18px !important;
+    line-height: 21px !important;
   }
 
-  /* 用户气泡：字号 12px。
-     ⚠️ 气泡行高【只在这里】声明：v11 起为 15px。
+  /* 用户气泡：字号 14px（与正文一致）。
+     ⚠️ 气泡行高【只在这里】声明，当前 18px（14px × 1.29）。
         曾在 v9 因另一处写 1.5、v10 又写 16px 而反复冲突，
         现定死"气泡行高全文件唯一声明点 = 此处"。 */
   [class*="_bubble"] {
-    font-size: 12px !important;
-    line-height: 15px !important;
+    font-size: 14px !important;
+    line-height: 18px !important;
   }
 
   /* 输入框同步 12px，行高 18px
@@ -152,25 +152,25 @@
     white-space: nowrap !important;
     overflow: hidden !important;
     text-overflow: ellipsis !important;
-    line-height: 17px !important;
-    font-size: 12px !important;
+    line-height: 19px !important;
+    font-size: 13px !important;
   }
 
-  /* 各级标题字号按比例下调，保持层次。
-     行高统一交给下方 v10-2 段（h1 24 / h2 22 / h3 20 / h4-h6 18），
+  /* 各级标题字号：随正文 14px 同步上调，保持原有的层级差。
+     行高统一交给下方 v10-2 段（h1 27 / h2 24 / h3 23 / h4-h6 21），
      此处不重复声明行高，避免同文件两条规则互相覆盖。 */
-  [class*="_markdown_"] h1 { font-size: 18px !important; }
-  [class*="_markdown_"] h2 { font-size: 16px !important; }
-  [class*="_markdown_"] h3 { font-size: 14px !important; }
+  [class*="_markdown_"] h1 { font-size: 20px !important; }
+  [class*="_markdown_"] h2 { font-size: 18px !important; }
+  [class*="_markdown_"] h3 { font-size: 16px !important; }
   [class*="_markdown_"] h4,
   [class*="_markdown_"] h5,
-  [class*="_markdown_"] h6 { font-size: 13px !important; }
+  [class*="_markdown_"] h6 { font-size: 15px !important; }
 
-  /* 代码块字号：12px 下比正文再小会难认，与正文齐平（行高见 v10-2 段） */
+  /* 代码块字号：比正文小 1px，既区别于正文又不至于难认（行高见 v10-2 段） */
   [class*="md-code-block"] pre,
   [class*="_markdown_"] pre,
   [class*="_markdown_"] pre code {
-    font-size: 12px !important;
+    font-size: 13px !important;
   }
 
   /* ==========================================================================
@@ -334,8 +334,8 @@
   [class*="_markdown_"] a code {
     display: inline-block !important;
     white-space: nowrap !important;
-    font-size: 11px !important;
-    line-height: 13px !important;
+    font-size: 12.5px !important;
+    line-height: 15px !important;
     padding: 1px 4px !important;
     border-radius: 4px !important;
     vertical-align: middle !important;
@@ -362,8 +362,8 @@
     border-radius: 0 !important;
   }
   [class*="_markdown_"] pre code {
-    font-size: 11.5px !important;
-    line-height: 18px !important;
+    font-size: 13px !important;
+    line-height: 19px !important;
   }
 
   /* ---- v14-4 列表缩进统一 15 → 18px（覆盖 v11-3） ---- */
@@ -704,13 +704,13 @@
    * 不重复写 —— 同文件重复声明同优先级规则会互相覆盖，已踩过两次。
    * ======================================================================== */
 
-  /* 标题行高跟着缩，避免大标题撑高 */
-  [class*="_markdown_"] h1 { line-height: 24px !important; }
-  [class*="_markdown_"] h2 { line-height: 22px !important; }
-  [class*="_markdown_"] h3 { line-height: 20px !important; }
+  /* 标题行高跟着字号走（正文 14px / 21px 的基准） */
+  [class*="_markdown_"] h1 { line-height: 27px !important; }
+  [class*="_markdown_"] h2 { line-height: 24px !important; }
+  [class*="_markdown_"] h3 { line-height: 23px !important; }
   [class*="_markdown_"] h4,
   [class*="_markdown_"] h5,
-  [class*="_markdown_"] h6 { line-height: 18px !important; }
+  [class*="_markdown_"] h6 { line-height: 21px !important; }
 
   /* 代码块行高 19px → 17px */
   [class*="md-code-block"] pre,
@@ -958,11 +958,11 @@
 
   /* 【v10 更正】v9 时这里写死 22px，与文件开头 v10 的 18px 冲突。
      两条同为 (0,1,0) 且都在 @media 内 → **后写者胜**，结果开头那条白写，
-     实测 hWmORq_body 行高仍是 22px。现统一为 18px。
+     实测 hWmORq_body 行高仍是 22px。现统一为 21px（对应正文 14px）。
      （这类"同文件自己打自己"已经踩过两次：v9 的 _bubble line-height:1.5、
        v9 的 hWmORq 22px —— 教训：行高只在开头一处定义，别在文件后段重复。） */
   [class*="hWmORq_body"] {
-    line-height: 18px !important;
+    line-height: 21px !important;
   }
 
   [class*="_markdown_"] > p:first-child { margin-top: 0 !important; }
@@ -1050,7 +1050,7 @@
     white-space: pre !important;
     word-break: normal !important;
     overflow-wrap: normal !important;
-    font-size: 12.5px !important;
+    font-size: 13px !important;
     line-height: 1.55 !important;
     -webkit-overflow-scrolling: touch !important;
   }
@@ -1098,7 +1098,7 @@
     overflow-x: auto !important;
     max-width: 100% !important;
     -webkit-overflow-scrolling: touch !important;
-    font-size: 13px !important;
+    font-size: 14px !important;
   }
 
   [class*="_markdown_"] {
