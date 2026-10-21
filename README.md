@@ -919,6 +919,39 @@ Host 改写导致 401、`/api` 403、边缘 CDN 缓存、路由同步延迟。
 （`fix-github-dns.sh` 会自动设置）
 </details>
 
+<details>
+<summary><b>13. 点「Open configuration file」提示无法打开配置</b></summary>
+
+**现象**：Settings → General → Open configuration file，
+报 `Could not open configuration file`。
+
+抓包看接口返回：
+
+```json
+POST /api/settings/openSettingsDocument  →  200
+{ "ok": false,
+  "error": { "message": "path open failed: Command failed:
+    xdg-open /root/.dsh/profiles/web/cordis.patch.yml
+    [: 1: Syntax error: Unterminated quoted string" } }
+```
+
+**根因是环境，不是配置**：dsh 用 `xdg-open` 打开文件，而沙箱里
+
+- 没有桌面环境：chromium 因 root 无 sandbox 报错、firefox/iceweasel 不存在
+- dsh 侧还叠加了 shell 引号解析错误
+
+**本仓库的处理**：桥接层提供 `GET /config` 只读页，
+`mobile-polish` 在浏览器侧把该按钮的点击重定向过去。
+
+| 地址 | 行为 |
+|---|---|
+| `https://<域名>/config` | 展示 `cordis.patch.yml` 等配置，支持复制 |
+| 鉴权 | 需已通过 `/go` 登录（存在 `dsh-auth-*` Cookie），否则 401 |
+
+> 配置里可能含 API key，所以 `/config` **不做匿名访问**。
+> 该功能可用 `config.openConfigInBrowser: false` 单独关闭。
+</details>
+
 ---
 
 ## 13. 回滚
