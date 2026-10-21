@@ -519,10 +519,46 @@ DeepSeek Harness —— 访问地址
 
 访问链接（首次打开用于换取会话 Cookie）：
 https://<你的域名>/?token=xxxxxxxxxxxx
+
+公网域名：https://<你的域名>/
+永久入口：https://<你的域名>/go
+          （token 变了也不怕，这个地址会自动跳到最新链接）
 ```
 
 **把这个链接在浏览器里打开一次** —— 它会用 token 换取一个 30 天有效的 Cookie，
 之后直接访问域名即可，不用再带 token。
+
+> ### 🔗 推荐收藏 `/go`，而不是带 token 的链接
+>
+> **dsh 每次启动都会重新生成 token，且没有固定 token 的选项**
+>（`dsh web --help` 里没有相关参数，token 是 32 字节随机数）。
+> 所以服务一重启，你之前存的 `?token=...` 链接就全部失效，
+> 打开会看到：
+>
+> ```
+> dsh web authentication required; reopen the URL printed by dsh web.
+> ```
+>
+> 桥接层为此加了**永久入口**：`https://<你的域名>/go`
+>
+> | 请求 | 行为 |
+> |---|---|
+> | `GET /go` | **302** → `/?token=<当前最新 token>` |
+> | dsh 尚未就绪 | **503** + 提示页（等几秒刷新） |
+>
+> 实测（作者环境）：
+>
+> ```
+> $ curl -i https://<域名>/go
+> HTTP/2 302
+> cache-control: no-store
+> location: /?token=4IbOr1xCwvrgXgg1j2ANac3QJixAGsSLebyYxVb6dCE
+> ```
+>
+> **所以：收藏 `/go` 这一个地址就够了**，token 怎么变都不用管。
+>
+> 实现代价极小：桥接层从 dsh 的 stdout 里解析 token 时顺手存一份
+> （`CURRENT_TOKEN`），`/go` 直接 302 过去。不需要改 dsh 本身。
 
 > ### 📌 Cookie 是按域名签发的，两个域名互不相通
 >
@@ -706,6 +742,7 @@ error: --host 0.0.0.0 is intentionally not supported yet for safety:
 dsh-public-deploy/
 ├── README.md                  ← 你正在看的：部署操作手册
 ├── .env.public.example        公网域名配置样例（复制为 .env.public）
+├── .cloudstudio.example       沙箱自启动配置样例（复制到 /workspace/.cloudstudio）
 ├── scripts/
 │   ├── scripts/dsh-public-bridge.js   ★ 公网桥接核心
 │   ├── whereami.sh            ★ 找出你的公网域名（并探测连通性）

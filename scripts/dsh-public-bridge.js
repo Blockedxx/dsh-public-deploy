@@ -403,6 +403,32 @@ function proxyHttp(req, res) {
 
 const server = http.createServer((req, res) => {
   pickHost(req);
+
+  // ── 永久入口 /go ──────────────────────────────────────────────────────
+  // dsh 每次启动都会生成新的鉴权 token（且没有固定 token 的选项），
+  // 服务一旦重启，之前保存的 ?token= 链接就全部失效。
+  // 这里提供一个稳定地址：访问 /go 时 302 到当前 token，
+  // 用户只需要记住 https://<域名>/go，重启多少次都能进去。
+  const reqPath = req.url.split('?')[0];
+  if (reqPath === '/go' || reqPath === '/go/') {
+    res.setHeader('Cache-Control', 'no-store');
+    if (CURRENT_TOKEN) {
+      res.writeHead(302, { Location: `/?token=${CURRENT_TOKEN}` });
+      res.end();
+    } else {
+      res.writeHead(503, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(
+        '<!doctype html><meta charset="utf-8"><title>dsh 正在启动</title>' +
+          '<body style="font-family:system-ui,sans-serif;padding:2rem;line-height:1.6">' +
+          '<h1>dsh 正在启动</h1>' +
+          '<p>还没拿到鉴权 token，请等 5~10 秒后刷新本页。</p>' +
+          '<p>若长时间如此，检查桥接日志：<code>/tmp/dsh-bridge.out</code></p>' +
+          '</body>'
+      );
+    }
+    return;
+  }
+
   // open-in-app 图标：沙箱无桌面环境，上游提取不到，补本地图标
   if (req.url.startsWith('/open-in-app/icon/')) {
     if (handleOpenInAppIcon(req, res) !== false) return;
@@ -445,7 +471,13 @@ server.on('clientError', (err, socket) => {
 
 const TOKEN_RE = /dsh web:\s*\S*[?&]token=([A-Za-z0-9_-]+)/u;
 
+// 当前 dsh 的鉴权 token（每次 dsh 启动都会重新生成）。
+// 供 /go 永久入口使用：用户只需记住 https://<域名>/go，
+// 由桥接层 302 到最新的 /?token=xxx，免去每次重启后手工找链接。
+let CURRENT_TOKEN = '';
+
 function publishAccessUrl(token) {
+  CURRENT_TOKEN = token;
   // PUBLIC_HOST 可能为空（未设置时靠运行时学习）。
   // 此时退化为「只给本地链接 + 提示」，避免输出 https:///?token= 这种坏 URL。
   const hasHost = PUBLIC_HOST !== '';
@@ -458,6 +490,8 @@ function publishAccessUrl(token) {
   lines.push('');
   if (hasHost) {
     lines.push(`公网域名：https://${PUBLIC_HOST}/`);
+    lines.push(`永久入口：https://${PUBLIC_HOST}/go`);
+    lines.push('          （token 变了也不怕，这个地址会自动跳到最新链接）');
   } else {
     lines.push('公网域名：未设置（DSH_PUBLIC_HOST 为空）');
     lines.push('');

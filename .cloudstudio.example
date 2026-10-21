@@ -1,0 +1,22 @@
+# WorkBuddy / CloudStudio 沙箱自启动配置
+#
+# 用法：把本文件复制到 /workspace/.cloudstudio
+#   cp .cloudstudio.example /workspace/.cloudstudio
+#
+# 作用：沙箱启动/唤醒时自动拉起桥接进程，不用手动 restart.sh。
+#
+# ⚠️ 两个容易踩的点：
+#   1. 路径必须指向**本仓库**（scripts/dsh-public-bridge.js）。
+#      作者实测踩过：早期用的是另一个开发目录，结果沙箱重启后跑的是旧版
+#      桥接（没有后续修复），排查半天才发现自启动指错了地方。
+#   2. 必须加载 .env.public，否则 DSH_PUBLIC_HOST 为空，
+#      主入口域名的 trusted-host 校验会失败（/api 返回 403）。
+#
+# port 写 8089 是平台约定（它按这个端口探测应用是否起来）；
+# 桥接自己仍监听 3000 —— 桥接进程**刻意忽略** PORT 环境变量，
+# 因为部分沙箱的 8089 已被内置 sync_server 占用。
+
+[[app]]
+name = "app"
+port = 8_089
+cmd = 'cd "/workspace/dsh-public-deploy" && set -a && . ./.env.public && set +a && PORT=8089 node scripts/dsh-public-bridge.js'
