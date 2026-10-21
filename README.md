@@ -229,8 +229,36 @@ dsh plugin --profile web add dsh-mobile
 
 # 确认装上了
 dsh plugin --profile web list
-# 应输出：dsh-mobile 0.4.x
+# 应输出：dsh-mobile 0.6.x（dsh 0.2.x 环境下）
 ```
+
+> ### ⚠️ dsh 0.2.x 起会强制检查插件版本兼容性
+>
+> 从 **0.2.0** 开始，dsh 启动时会核对每个插件声明的 `peerDependencies`，
+> 不匹配就**跳过该插件**（而不是崩溃）：
+>
+> ```
+> dsh: skipping profile bundle "dsh-mobile": Plugin dsh-mobile@0.4.1 is
+> incompatible with dsh 0.2.1-rc.2: requirements {"@deepseek-ai/dsh-client-connection":
+> "^0.1.0-rc.5 || ...","@deepseek-ai/dsh-commands":"^0.1.0-rc.6 || ..."}
+> ```
+>
+> **实测对照**：
+>
+> | dsh-mobile | peerDependencies | 在 dsh 0.2.1 下 |
+> |---|---|---|
+> | `0.4.1`（旧） | 锁死 `^0.1.x` | ❌ 被跳过 |
+> | `0.6.13`（新） | 全部 `*` | ✅ 正常加载 |
+>
+> 所以**升级 dsh 后必须同步升级 dsh-mobile**：
+>
+> ```bash
+> dsh plugin --profile web add dsh-mobile@latest
+> ```
+>
+> 别指望"装上了就能用"——被跳过的插件不会报错退出，
+> 只会在启动日志里留一行 `skipping profile bundle`，很容易漏看。
+> 验证方法：页面 HTML 里能搜到 `dsh-mobile/client.js` 才算真的加载了。
 
 然后克隆本仓库，用自带的脚本装上排版优化插件：
 
@@ -1056,6 +1084,75 @@ POST http://codebuddy.auth-proxy.local/v2/agentos/artifact-releases
 | 7 | `docs/安装说明.md` 把 `dsh web --host 0.0.0.0` 列为常用命令 | 该参数被官方**刻意拒绝**（会暴露 RCE），已删除并加说明 |
 | 8 | `docs/部署说明.md` 路径 `/workspace/dsh-公网部署/` + 根目录脚本 | 现为 `/workspace/dsh-public-deploy/` + `scripts/` + `plugins/` |
 | 9 | `plugins/mobile-polish` 的 `files` 只列 2 个 lib 文件 | `lib/drawer-autoclose.mjs` 被 `index.mjs` import 却漏列，已补（否则 `npm pack` 分发会缺文件 → dsh 启动崩溃） |
+
+### 2026-10-21：升级到 dsh 0.2.1-rc.2
+
+从 `0.1.5-rc.1` 升级到 `0.2.1-rc.2`（跨 0.2.0 大版本），实测记录：
+
+| 项 | 升级前 | 升级后 | 影响 |
+|---|---|---|---|
+| dsh | `0.1.5-rc.1` | **`0.2.1-rc.2`** | — |
+| dsh-mobile | `0.4.1` | **`0.6.13`** | 必须同步升级，见下 |
+| `mobile-polish` | v9 | v9 | ✅ 无需改动，选择器仍匹配 |
+| `local-loopback-trust` | — | — | ✅ 无需改动，注入正常 |
+
+**三个需要注意的变化：**
+
+1. **插件版本强制校验（0.2.0 新增）**
+   旧版 `dsh-mobile@0.4.1` 的 `peerDependencies` 锁死在 `^0.1.x`，
+   在 0.2.1 下会被**静默跳过**（日志一行 `skipping profile bundle`），
+   移动端骨架直接消失。升级到 `0.6.13`（peerDeps 全为 `*`）即可。
+
+2. **输入框从 `<textarea>` 改成 `<div contenteditable role="textbox">`**
+   如果有自动化脚本（Playwright / 油猴）按 `textarea` 定位输入框，需要改选择器：
+   ```js
+   document.querySelector('[role=textbox], [contenteditable=true]')
+   ```
+   发送也不能靠 `Enter`，要点 `button[aria-label="Send message"]`。
+
+3. **新增 Preview Notice 引导弹窗**
+   首次打开会全屏显示 0.2 预览声明，必须点 `Continue` 才能进入。
+   自动化脚本需先处理它，否则截图只能拍到声明页。
+
+**好消息**：`mobile-polish` 依赖的 CSS Modules 类名 hash **没有变**
+（仍是 `EvIC1a_column` / `EvIC1a_flowItem` / `xzv4MW_action`），
+所以 `[class*="_column"]` 这类子串匹配继续有效。
+
+实测聊天界面计算样式（视口 381×741，DPR 2.8375）：
+
+| 元素 | 升级后实测 | 说明 |
+|---|---|---|
+| `_column` 的 `row-gap` | **4px** | ✅ 我们的压缩仍生效（原生 10px） |
+| `_bubble` 字号 / 行高 | **12px / 15px** | ✅ 生效 |
+| `flowItem` margin/padding | **0 / 0** | ✅ 生效 |
+| 横向溢出 | **无** | ✅ |
+| `console.error` | **0** | ✅ |
+
+**一处「改不动」且不该改的地方**：输入框字号
+
+升级后输入框实测仍是 **16px**，即使加 `!important` 也改不动。
+根因在 `dsh-mobile@0.6.x` 自己注入的样式：
+
+```css
+/* dsh-mobile/lib/client.js */
+[data-dsh-mobile-center] :is(input, textarea, [contenteditable="true"], ...) {
+  font-size: max(16px, 1em, var(--dsh-content-font-size, 1em)) !important;
+}
+```
+
+两个原因叠加：
+1. 它的特异性 **(0,1,1)** 高于我们的 `[class*="uV2eYG_input"]` **(0,1,0)**；
+2. `max(16px, ...)` 把下限锁死在 16px。
+
+**这是官方有意为之**——iOS Safari 在输入框字号 < 16px 时，
+聚焦会自动放大整个页面，体验更差。所以本地这条规则保持被覆盖即可，
+不要为了「统一 12px」去硬覆盖它。
+
+同理，`--dsh-content-font-size` 变量在 0.2.x 下也不再被我们的 `body` 覆盖生效，
+但正文有直接的 `font-size: 12px !important`，所以显示效果不受影响。
+
+**已知不兼容**：平台注入的 `@wxg-prc-cpg/browser-skill-dsh-plugin@0.3.0`
+仍要求 `^0.1.x`，在 0.2.1 下被跳过。这是平台侧插件，不影响 dsh 本体与移动端。
 
 ---
 

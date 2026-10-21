@@ -132,9 +132,13 @@
     line-height: 15px !important;
   }
 
-  /* 输入框同步 12px，行高 18px */
+  /* 输入框同步 12px，行高 18px
+     ⚠️ dsh 0.2.x 起输入框由 <textarea> 改为 <div contenteditable role="textbox">，
+     因此必须同时匹配 [role="textbox"] / [contenteditable]，否则 0.2.x 下这条规则失效。 */
   [class*="composerStack"] textarea,
   [class*="composerStack"] [class*="editor"],
+  [class*="composerStack"] [role="textbox"],
+  [class*="composerStack"] [contenteditable="true"],
   [class*="uV2eYG_input"] {
     font-size: 12px !important;
     line-height: 18px !important;
@@ -1147,9 +1151,12 @@
     gap: 2px !important;
   }
 
-  /* 输入框本体：别让它自己撑出额外高度 */
+  /* 输入框本体：别让它自己撑出额外高度
+     同 v10 段说明：0.2.x 是 contenteditable，需补 [role="textbox"] */
   [class*="composerStack"] textarea,
-  [class*="composerStack"] [class*="editor"] {
+  [class*="composerStack"] [class*="editor"],
+  [class*="composerStack"] [role="textbox"],
+  [class*="composerStack"] [contenteditable="true"] {
     min-height: 24px !important;
     max-height: 40vh !important;
   }
