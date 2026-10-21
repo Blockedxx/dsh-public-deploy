@@ -401,6 +401,95 @@ function proxyHttp(req, res) {
   req.pipe(upstream);
 }
 
+// ── 配置查看页 ────────────────────────────────────────────────────────────
+// 替代 dsh 在无桌面环境下失效的「Open configuration file」。
+// 返回只读视图 + 复制按钮；不做任何写操作。
+function handleConfigPage(req, res) {
+  // 鉴权：必须是已登录会话（浏览器里存在 dsh 签发的 Cookie）
+  const cookieHeader = req.headers.cookie || '';
+  const authed = /(^|;\s*)dsh-auth-[^=]+=/.test(cookieHeader);
+  if (!authed) {
+    res.writeHead(401, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end('需要先登录：请打开 /go 换取会话 Cookie 后再访问本页。');
+    return true;
+  }
+
+  const profileDir = process.env.DSH_PROFILE_DIR || '/root/.dsh/profiles/web';
+  const candidates = [
+    { path: path.join(profileDir, 'cordis.patch.yml'), label: 'cordis.patch.yml（profile 补丁层）' },
+    { path: path.join(profileDir, 'cordis.yml'), label: 'cordis.yml（profile 入口）' },
+    { path: path.join(profileDir, 'package.json'), label: 'package.json（bundle 清单）' },
+    { path: '/root/.dsh/settings.yaml', label: 'settings.yaml' },
+    { path: '/root/.dsh/settings.yaml.imported', label: 'settings.yaml.imported' },
+  ];
+
+  const esc = (s) =>
+    String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  const sections = [];
+  for (const c of candidates) {
+    let body;
+    try {
+      body = fs.readFileSync(c.path, 'utf8');
+    } catch {
+      continue; // 不存在就跳过
+    }
+    sections.push(
+      `<section><h2>${esc(c.label)}</h2>` +
+        `<div class="path">${esc(c.path)} · ${body.length} 字节</div>` +
+        `<div class="wrap"><pre id="p${sections.length}">${esc(body)}</pre></div>` +
+        `<button class="copy" data-target="p${sections.length}">复制内容</button></section>`
+    );
+  }
+
+  const html =
+    '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<title>dsh 配置文件</title><style>' +
+    ':root{color-scheme:light dark}' +
+    'body{margin:0;padding:16px;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",system-ui,sans-serif;' +
+    'line-height:1.5;background:#fff;color:#111}' +
+    '@media(prefers-color-scheme:dark){body{background:#111;color:#e5e5e5}' +
+    'pre{background:#1c1c1e!important;border-color:#333!important}section{border-color:#333!important}}' +
+    'h1{font-size:18px;margin:0 0 4px}.sub{font-size:12px;opacity:.6;margin-bottom:16px}' +
+    'section{border:1px solid #e5e5e7;border-radius:10px;padding:12px;margin-bottom:14px}' +
+    'h2{font-size:13px;margin:0 0 4px}.path{font-size:11px;opacity:.55;margin-bottom:8px;word-break:break-all}' +
+    '.wrap{overflow:auto;max-height:50vh;-webkit-overflow-scrolling:touch}' +
+    'pre{margin:0;padding:10px;background:#f7f7f8;border:1px solid #eee;border-radius:8px;' +
+    'font-size:11px;line-height:1.55;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;' +
+    'white-space:pre;overflow-x:auto}' +
+    '.copy{margin-top:8px;padding:8px 14px;font-size:12px;border:1px solid #d0d0d5;' +
+    'background:transparent;color:inherit;border-radius:8px;cursor:pointer}' +
+    '.copy:active{opacity:.6}.hint{font-size:11px;opacity:.55;margin-top:14px}' +
+    'a{color:#0a84ff}</style></head><body>' +
+    '<h1>dsh 配置文件</h1>' +
+    `<div class="sub">只读视图 · profile：${esc(profileDir)}</div>` +
+    sections.join('') +
+    '<div class="hint">手机上没有桌面编辑器，dsh 的「Open configuration file」' +
+    '按钮依赖 xdg-open，在沙箱里无法工作。本页用于查看与复制。<br>' +
+    '修改请通过 dsh 的 Settings 界面，或在终端编辑上述路径。</div>' +
+    '<script>' +
+    'document.querySelectorAll(".copy").forEach(function(b){' +
+    'b.addEventListener("click",function(){' +
+    'var pre=document.getElementById(b.dataset.target);' +
+    'var t=pre?pre.textContent:"";' +
+    'var done=function(){b.textContent="已复制";setTimeout(function(){b.textContent="复制内容"},1500)};' +
+    'if(navigator.clipboard&&navigator.clipboard.writeText){' +
+    'navigator.clipboard.writeText(t).then(done).catch(function(){fallback(t,done)})' +
+    '}else{fallback(t,done)}})});' +
+    'function fallback(t,cb){var ta=document.createElement("textarea");ta.value=t;' +
+    'document.body.appendChild(ta);ta.select();try{document.execCommand("copy");cb()}catch(e){}ta.remove()}' +
+    '</script></body></html>';
+
+  res.writeHead(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+  });
+  res.end(html);
+  return true;
+}
+
 const server = http.createServer((req, res) => {
   pickHost(req);
 
@@ -427,6 +516,21 @@ const server = http.createServer((req, res) => {
       );
     }
     return;
+  }
+
+  // ── 配置查看 /config ──────────────────────────────────────────────────
+  // 背景：dsh 的「Open configuration file」按钮会调用 xdg-open 打开本地文件。
+  // 沙箱没有桌面环境（xdg-open 找不到浏览器，实测报
+  //   "xdg-open ... Syntax error: Unterminated quoted string"），
+  // 于是前端只显示 "Could not open configuration file"。
+  //
+  // 这不是配置坏，而是环境限制。这里提供一个浏览器内查看入口，
+  // 让手机也能读到配置内容并一键复制。
+  //
+  // 安全：配置里可能含 API key / 路径，必须要求已通过 dsh 鉴权
+  //       （即浏览器里存在 dsh 签发的 dsh-auth-* Cookie）。
+  if (reqPath === '/config' || reqPath === '/config/') {
+    if (handleConfigPage(req, res) !== false) return;
   }
 
   // open-in-app 图标：沙箱无桌面环境，上游提取不到，补本地图标

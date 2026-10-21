@@ -47,6 +47,7 @@ import { fileURLToPath } from 'node:url';
 import z from '@deepseek-ai/schemastery';
 
 import { buildDrawerAutocloseScript } from './drawer-autoclose.mjs';
+import { buildConfigLinkScript } from './config-link.mjs';
 
 export const name = 'dsh-mobile-polish';
 
@@ -73,6 +74,15 @@ export const Config = z.object({
    * 样式优化照常生效）。详见 lib/drawer-autoclose.mjs 头部注释。
    */
   closeDrawerOnSessionPick: z.boolean().default(true),
+
+  /**
+   * 把「Open configuration file」按钮重定向到桥接层的 /config 只读页。
+   *
+   * 背景：该按钮由服务端调用 xdg-open，沙箱无桌面环境，必然失败并提示
+   * "Could not open configuration file"。本补丁在浏览器侧接管点击，
+   * 改为打开可查看/复制配置的页面。详见 lib/config-link.mjs。
+   */
+  openConfigInBrowser: z.boolean().default(true),
 
   /** 打印注入日志，便于排查。 */
   verbose: z.boolean().default(false),
@@ -136,6 +146,12 @@ export function apply(ctx, config) {
     ? buildDrawerAutocloseScript({ verbose })
     : null;
 
+  // 「Open configuration file」重定向（独立开关，关掉只影响这一条）。
+  const configLinkEnabled = config.openConfigInBrowser === true;
+  const configLinkJs = configLinkEnabled
+    ? buildConfigLinkScript({ verbose, target: '/config' })
+    : null;
+
   // 注意：不在文件顶层导出 `inject`，而是用 ctx.inject(['webServer'], ...)
   // 延迟到 webServer 服务就绪后再订阅（对齐官方 dsh-client-ui-theme 写法）。
   ctx.inject(['webServer'], (webCtx) => {
@@ -144,6 +160,9 @@ export function apply(ctx, config) {
       table.push({ kind: 'style', text: finalCss });
       if (drawerJs !== null) {
         table.push({ kind: 'script', text: drawerJs });
+      }
+      if (configLinkJs !== null) {
+        table.push({ kind: 'script', text: configLinkJs });
       }
       if (verbose) {
         ctx.logger.info(
