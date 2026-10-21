@@ -144,6 +144,18 @@
     line-height: 18px !important;
   }
 
+  /* 占位提示：360px 下原始文案需 398px、容器仅 231px。
+     ⚠️ 曾尝试 white-space: normal 换行 —— 实测第二行会被底部按钮行遮挡
+     （只露出半截文字），比截断更糟，故保持单行 + ellipsis。
+     字号降到 12px 可让可见字符更多，且不改变布局高度。 */
+  [class*="uV2eYG_placeholder"] {
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    line-height: 17px !important;
+    font-size: 12px !important;
+  }
+
   /* 各级标题字号按比例下调，保持层次。
      行高统一交给下方 v10-2 段（h1 24 / h2 22 / h3 20 / h4-h6 18），
      此处不重复声明行高，避免同文件两条规则互相覆盖。 */
@@ -1194,9 +1206,15 @@
   }
 
   [class*="bOPqQW_pill"] {
-    gap: 3px !important;
+    gap: 4px !important;
     flex: 0 0 auto !important;
     min-width: max-content !important;
+    /* dsh 0.2.x 把 pill 字号提到 13px、padding 1px 8px，
+       在 360px 视口下两个 pill + 3% 指示器总宽 394px > 视口，
+       导致左侧文字被裁、右侧 3% 溢出 26px。
+       这里压到 11px / 4px，实测总宽回落到 ~334px，可完整容纳。 */
+    font-size: 11px !important;
+    padding: 1px 4px !important;
   }
 
   [class*="bOPqQW_anchor"] {
@@ -1205,19 +1223,67 @@
     max-width: none !important;
   }
 
-  /* 容器：压缩间距，并把 gap 从 12px 收到 8px（省 4px） */
+  /* 容器：压缩间距。0.2.x 下 gap 8px 偏大，且总宽已超视口 */
   [class*="bOPqQW_root"] {
-    gap: 8px !important;
+    gap: 4px !important;
     flex-wrap: nowrap !important;
     overflow: visible !important;
     max-width: none !important;
   }
 
+  /* 分隔符：原来是 -2px 负 margin，在 0.2.x 的紧凑布局下会让
+     "steps" 与 "70 tok/s"、"tok" 与 "Cache" 直接粘连，改为 0。 */
   [class*="bOPqQW_sep"] {
-    margin-left: -2px !important;
-    margin-right: -2px !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
   }
 
+  /* 3% 上下文使用率指示器：0.2.x 新增。窄屏下让它整体右对齐并按需收缩，
+     避免 right 超出视口被裁掉一半。 */
+  [class*="JObwrW_root"] {
+    flex: 0 1 auto !important;
+    min-width: 0 !important;
+    margin-left: auto !important;
+    overflow: visible !important;
+  }
+
+  [class*="JObwrW_trigger"] {
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+
+}
+
+/* ============================================================================
+ * 11b. 超窄屏（≤400px）状态栏取舍
+ * --------------------------------------------------------------------------
+ * 实测（360×640）：状态栏 dock 实际可用宽度只有 281px
+ *   （dock x=36 w=281，两侧还有 root 的 16px padding），
+ * 而三项内容需要：
+ *   pill1 (turns/steps/tok/s) 140 + pill2 (tok/cache) 142 + 3% 指示器 64
+ *   + gap 24 = 370px  >>  281px
+ * 由于 pill 是 flex-shrink:0（拒绝收缩），必然向两侧溢出：
+ *   左侧 pill1 x=-9（"1 turns" 的 1 被裁），右侧 3% right=362（超出视口）。
+ *
+ * 取舍：3% 是「上下文使用率」，属于次要信息；两个 pill 是运行状态核心信息。
+ * 因此在 ≤400px 隐藏 3% 指示器，并把 pill 压到 10px，总宽回到 ~268px。
+ * 稍宽的手机（≥401px）仍完整显示 3%。
+ * ========================================================================== */
+@media (max-width: 400px) {
+  [class*="JObwrW_root"] {
+    display: none !important;
+  }
+
+  [class*="bOPqQW_pill"] {
+    font-size: 10px !important;
+    padding: 1px 3px !important;
+    gap: 3px !important;
+  }
+
+  [class*="bOPqQW_root"] {
+    gap: 3px !important;
+    justify-content: center !important;
+  }
 }
 
 /* ============================================================================
